@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -234,8 +235,7 @@ sys.exit(12)
         secret = "private-config-secret"
         with self.assertRaises(ProcessError) as caught:
             self.manager.start([str(self.directory / secret), secret], env={"KEY": secret})
-        self.assertNotIn(secret, str(caught.exception))
-        self.assertTrue(caught.exception.__suppress_context__)
+        self.assertNotIn(secret, "".join(traceback.format_exception(caught.exception)))
         self.assertEqual(self.start("pass").wait(timeout=5), 0)
 
     def test_shutdown_stops_tree_and_permanently_rejects_launches(self):
