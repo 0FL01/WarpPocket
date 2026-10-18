@@ -1,0 +1,25 @@
+# Python environments, bytecode and local packaging output.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+/build/
+/dist/
+
+# Downloaded executables are reproduced from vendor/manifest.json, never tracked.
+/vendor/linux-amd64/
+/vendor/windows-amd64/
+
+# Private runtime state, account keys and local environment secrets.
+.env
+.env.*
+/secrets/
+/private/
+/profiles/
+/accounts/
+/runtime/
+/.warppocket/
+/wgcf-account.toml
+/wgcf-profile.conf
+*.private.key

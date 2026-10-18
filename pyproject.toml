@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "warppocket"
+version = "0.1.0"
+description = "A local WARP SOCKS5 desktop client"
+requires-python = ">=3.12"
+dependencies = ["requests[socks]==2.34.2"]
+
+[dependency-groups]
+build = ["pyinstaller==6.22.3", "setuptools==84.0.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Source compatibility starts at 3.12; the Windows executable is built on 3.13.16.
+[tool.warppocket]
+windows-build-python = "3.13.16"
