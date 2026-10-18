@@ -1,6 +1,6 @@
 # Goal: WarpPocket MVP
 
-Status: active
+Status: blocked
 Source: docs/origin.md; reviewed conversation plan; user request to implement, commit and push.
 Last updated: 2026-10-18
 
@@ -35,8 +35,8 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
   - Source: latest user implementation request.
   - Acceptance: commit exists on origin; Actions result or concrete blocker reported.
   - Primary evidence: git commit SHA, remote SHA and workflow run.
-  - Status: in_progress
-  - Evidence: SSH remote is configured and accessible; initial headless commit/push and native Windows Actions verification are next.
+  - Status: verified
+  - Evidence: implementation bafa87a248d24f8402c99ccd3931e93b5f6a69b0 and test correction 396fd708d8caf0879b4e4c84852e879639cad5f0 pushed to origin/master. Actions run https://github.com/0FL01/WarpPocket/actions/runs/39165431267 succeeded on Linux Python 3.12.15/3.13.16 and Windows Python 3.13.16. Final documentation-only checkpoint does not change tested code/workflow.
 
 ### Constraints
 - No GUI before R1 network gate. Stop at confirmed registration/transport incompatibility rather than conceal it.
@@ -52,20 +52,20 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 ## Change Envelope
 - Target: this repository root, src/warppocket, tests, scripts, vendor metadata/licenses, dependency locks, README and .github/workflows.
 - Consumers: headless E2E first; later controller/Tk and Windows packaging.
-- Allowed: Python stdlib, requests[socks], pinned PyInstaller, verified upstream helpers.
-- Forbidden: tracked helper binaries, private profiles/accounts, live registration in ordinary CI, changes outside the repository.
+- Allowed: Python stdlib, requests[socks], pinned PyInstaller, verified upstream helpers; private runtime data in the user data directory required by the reviewed plan.
+- Forbidden: tracked helper binaries, private profiles/accounts, live registration in ordinary CI, source/configuration edits outside the repository or to adjacent projects.
 
 ## Current Checkpoint
-- Closes: R4; preserves the R1 blocker without expanding transport scope.
-- Smallest next action: run the final offline suite, commit/push the headless deliverable and inspect native Windows/Linux Actions. Fix only confirmed failures of this path.
-- Expected evidence: pushed SHA and Actions jobs; no EXE/MVP completion claim.
-- Stop or replan if: no approved in-scope action can unlock R1; do not start GUI or new transports.
+- Closes: R4 verified; R1/R2/R3 remain blocked.
+- Smallest next action: external network/working endpoint or compatible working profile is needed to unlock R1. Do not repeat the same failed local trial without changed input/network conditions.
+- Expected evidence after unlock: real gate confirms WARP HTTPS, an independent resource, endpoint switch and primary/probe continuity using the existing saved primary where possible.
+- Stop or replan if: no approved in-scope action can unlock R1; do not start GUI or new transports. No substantive action remains in this environment.
 
 ## Current State
 - Resolved: pinned dependencies/helpers, private storage and safe diagnostics, strict profiles/import, native process ownership, WireProxy backend, HTTPS health checks, opt-in E2E, offline tests and headless CI.
-- Last relevant evidence: `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v` ran 52 tests successfully (49 passed, 3 native-Windows skips) after the final E2E cleanup edit. Actual Linux helper starts/stops offline. The real gate failed on 30 endpoints, then confirmed no configs, live owned helper or port 25344 remained.
+- Last relevant evidence: local suite ran 52 tests (49 passed, 3 native-Windows skips); after the Windows test correction its module passed locally and the full Actions suite succeeded on all three jobs. Native Windows ran 52 tests (50 passed, 2 POSIX-only skips), including actual helper, owner-crash job cleanup, handle accounting and private DACL. The real gate failed on 30 endpoints, then confirmed no configs, live owned helper or port 25344 remained.
 - Blocker: no working WARP data path in this environment. Registration works, but the 30-candidate trial and literal-IP SOCKS TCP check failed. Exact cause is unknown; this does not prove universal WireGuard blocking. Probe was not registered because primary never passed.
-- Next: finish R4. Unlock R1 with a working endpoint/profile or a network where WireGuard data traffic succeeds; rerun the opt-in gate with separate probe consent. Then implement R2/R3 and obtain clean Windows 10 acceptance.
+- Next: unlock R1 with a working endpoint/profile or a network where WireGuard data traffic succeeds; rerun the opt-in gate with separate probe consent. Then implement R2/R3 and obtain clean Windows 10 acceptance.
 
 ### Failed network checkpoint (2026-10-18)
 
@@ -102,6 +102,10 @@ Result: exit 1, `no_working_endpoint`, 30 `candidate_failed/health_timeout` even
 ## Checkpoint History
 - 2026-10-18: contract frozen before implementation.
 - 2026-10-18: R1 headless code and offline tests implemented; real registration succeeded, but bounded network trials failed. GUI work stopped as required. R4 remains actionable through commit/push and native CI.
+- 2026-10-18: R4 verified by SSH push and successful Actions run 39165431267. Initial Windows run exposed a test assuming a context-suppression flag even when no exception context exists; corrected it to check that the full rendered exception contains no secret. Production process code unchanged. All native Windows ownership/privacy checks passed. Overall objective remains blocked on real network data traffic.
 
 ## Completion
-- Pending. Headless implementation exists; successful WARP data traffic, background continuity, GUI, EXE and Windows 10 acceptance are not claimed.
+- Resolved outcomes: R4 verified. R1/R2/R3 blocked; no waiver or MVP completion claimed.
+- Commands/artifacts: local offline suite, focused process-manager suite, real network gate and no-DNS diagnostic, pushed implementation/test commits and successful Actions run linked above.
+- Constraint/scope check: only planned headless paths, tests, dependencies/licenses, CI and documentation changed; origin.md content preserved; helpers and real secrets excluded from Git; no GUI before the gate, no new transport or system network changes.
+- Final status: blocked. Successful WARP data traffic, background continuity, GUI, EXE and Windows 10 acceptance remain unverified/unimplemented as applicable. Further substantive work waits for the smallest external unlock recorded above.
