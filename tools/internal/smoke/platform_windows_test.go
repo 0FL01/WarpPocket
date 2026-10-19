@@ -3,6 +3,7 @@
 package smoke
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -72,18 +73,51 @@ func TestNativeSmokeHelper(t *testing.T) {
 		if err != nil {
 			os.Exit(73)
 		}
-		launch, err := (windowsPlatform{}).Launch(nativeHelperArguments(executable, "child"), cwd)
+		childReady := os.Args[index+2] + ".ready"
+		launch, err := (windowsPlatform{}).Launch(nativeHelperArguments(executable, "child", childReady), cwd)
 		if err != nil {
 			os.Exit(74)
 		}
 		defer launch.Close()
-		if os.WriteFile(os.Args[index+2], []byte(strconv.Itoa(launch.GUI().PID())), 0o600) != nil {
+		ready, err := eventually(context.Background(), 20*time.Second, 10*time.Millisecond, func() (bool, error) {
+			data, err := os.ReadFile(childReady)
+			if os.IsNotExist(err) {
+				return false, nil
+			}
+			return bytes.Equal(data, []byte("ready")), err
+		})
+		if err != nil || !ready {
+			os.Exit(78)
+		}
+		if writeNativeReady(os.Args[index+2], []byte(strconv.Itoa(launch.GUI().PID()))) != nil {
 			os.Exit(75)
+		}
+	} else if len(os.Args) > index+2 {
+		// ResumeThread returning is not evidence that the child has executed.
+		// Publish readiness only after its Go runtime and NUL checks have run.
+		if writeNativeReady(os.Args[index+2], []byte("ready")) != nil {
+			os.Exit(79)
 		}
 	}
 	for {
 		time.Sleep(time.Hour)
 	}
+}
+
+func writeNativeReady(path string, data []byte) error {
+	file, err := os.CreateTemp(filepath.Dir(path), ".native-ready-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	_, err = file.Write(data)
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }
 
 func nativeHelperArguments(executable, role string, extra ...string) []string {
@@ -154,7 +188,7 @@ func TestNativeWindowsGUIOnlyTerminationWithRetainedSafetyJob(t *testing.T) {
 	}
 	measurements, err := launch.WorkingSets()
 	if err != nil || len(measurements) != 2 || measurements[0].WorkingSetBytes == 0 || measurements[1].WorkingSetBytes == 0 {
-		t.Fatal("job-wide native working sets not measured", err)
+		t.Fatalf("job-wide native working sets not measured: %+v, error=%v", measurements, err)
 	}
 	if err := launch.GUI().Terminate(); err != nil {
 		t.Fatal(err)

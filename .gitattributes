@@ -1,0 +1,3 @@
+# Embedded, digest-pinned patch payloads must retain their exact source bytes
+# on Windows checkouts as well as Unix. Do not normalize hashes at runtime.
+tools/internal/prepare/payload/*.go.txt text eol=lf
