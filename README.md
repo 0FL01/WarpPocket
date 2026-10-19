@@ -4,17 +4,31 @@
 
 ## Текущее состояние
 
-Реализованы **headless-ядро и приложение**: приватные профили и кеш, безопасный импорт, управляемые процессы, backend wireproxy, реальные HTTPS-проверки, ограниченный последовательный поиск стратегий, контроллер состояния и Tkinter-интерфейс. Обязательный сетевой gate **пройден локально 2026-10-19**. Осталась упаковка onefile EXE и приёмка на чистой Windows 10 — это следующий этап. Текущее состояние и доказательства записаны в [execution contract](docs/goals/2026-10-18-warppocket-mvp.md); исходное предложение — [docs/origin.md](docs/origin.md).
+Реализованы **headless-ядро и приложение**: приватные профили и кеш, безопасный импорт, управляемые процессы, backend wireproxy, реальные HTTPS-проверки, ограниченный последовательный поиск стратегий, контроллер состояния и Tkinter-интерфейс. Обязательный сетевой gate **пройден локально 2026-10-19**. Добавлены Windows onefile-сборка и проверка готового EXE в CI; приёмка на чистой Windows 10 ещё не выполнена. Текущее состояние и доказательства записаны в [execution contract](docs/goals/2026-10-18-warppocket-mvp.md); исходное предложение — [docs/origin.md](docs/origin.md).
 
 Причина прежних таймаутов: Cloudflare WARP требует 3 байта `reserved` (24-битный client id) в WireGuard-сообщениях; `wgcf` их не пишет, а upstream `wireproxy` не поддерживает. Патченная сборка helper'а (`scripts/build_wireproxy.py`) добавляет `reserved` в исходящие пакеты и очищает зеркалированное сервером поле во входящих; это подтверждено контрольным экспериментом с `sing-box` на том же профиле и endpoint.
 
 Gate прошёл: primary на `188.114.96.1:4500` (417 мс), после полной остановки другой endpoint `188.114.97.1:4500` (327 мс), повторное использование сохранённого профиля без регистрации, отдельный probe при непрерывных запросах primary (6 запросов, 0 сбоев) без изменений PID/порта/профиля, cleanup подтверждён. `engage.cloudflareclient.com:2408` в тестовых сетях стабильно таймаутит; рабочие кандидаты — `188.114.9x.1:4500`.
 
-GitHub Actions собирает патченный helper (Go 1.26) на Linux и Windows и прогоняет полный набор тестов с платформенными skips; на Windows выполняются настоящие Job Object owner-crash/handle tests, DACL test и offline smoke helper'а. Проверенный прогон: [run 39235875257](https://github.com/0FL01/WarpPocket/actions/runs/39235875257). Это не проверка готового onefile EXE и не замена Windows 10-приёмке.
+GitHub Actions собирает патченный helper (Go 1.26) на Linux и Windows и прогоняет полный набор тестов с платформенными skips; на Windows выполняются настоящие Job Object owner-crash/handle tests, DACL test и offline smoke helper'а. Предыдущий проверенный прогон приложения: [run 39237908290](https://github.com/0FL01/WarpPocket/actions/runs/39237908290). Новый packaging-job собирает EXE и отдельно проверяет штатное закрытие и аварийное завершение внутреннего GUI-процесса. CI на Windows Server 2022 не заменяет приёмку на Windows 10.
 
 Не считать открытый SOCKS-порт доказательством подключения: проверка требует `warp=on/plus` и независимого HTTPS-ресурса. Это не системный VPN и не гарантия обхода DPI.
 
 ## Запуск приложения
+
+### Готовый Windows EXE
+
+В успешном прогоне [GitHub Actions](https://github.com/0FL01/WarpPocket/actions) скачайте артефакт `WarpPocket-windows-x64` и распакуйте его. В нём должны быть `WarpPocket.exe` и `WarpPocket.exe.sha256`. Для запуска нужны только сам EXE и обычная учётная запись Windows x64: устанавливать Python, Go, WireGuard или драйверы не нужно. Приложение не подписано; SmartScreen может показывать предупреждение об неизвестном издателе.
+
+Проверка контрольной суммы в PowerShell:
+
+```powershell
+$expected = ((Get-Content .\WarpPocket.exe.sha256 -Raw).Trim() -split '\s+')[0]
+if ((Get-FileHash .\WarpPocket.exe -Algorithm SHA256).Hash -ne $expected) { throw 'SHA256 mismatch' }
+.\WarpPocket.exe
+```
+
+### Из исходников
 
 Приложение — то же ядро плюс Tkinter-интерфейс: подключение/отключение, копирование адреса SOCKS5, «Найти новую стратегию» без разрыва активного туннеля, импорт основного/проверочного профиля и просмотр диагностики.
 
@@ -24,9 +38,11 @@ PYTHONPATH=src .venv/bin/python -m warppocket --data-dir "$HOME/.local/share/war
 
 Без `--data-dir` используется системный каталог данных. Согласие с условиями Cloudflare запрашивается в интерфейсе перед первой регистрацией. Для поиска при активном подключении нужен отдельный профиль `probe`: приложение объясняет это отдельно и регистрирует вторую идентичность только после подтверждения.
 
+Поиск проверяет не больше 30 кандидатов за 180 секунд и не переключает активное соединение. Лучший результат сохраняется для следующего подключения; при нём endpoint заново проверяется основным профилем. Кнопка «Отмена» отменяет подключение; «Отключиться» доступна и во время фонового поиска.
+
 ## Разработка
 
-Python >=3.12, Tkinter/ttk из стандартной библиотеки. Для будущей Windows-сборки закреплён обычный CPython 3.13.16 x64 и PyInstaller 6.22.3. Актуальные security-релизы Python 3.12 не имеют официального Windows installer.
+Python >=3.12, Tkinter/ttk из стандартной библиотеки. Для Windows-сборки закреплён обычный CPython 3.13.16 x64 и PyInstaller 6.22.3. Актуальные security-релизы Python 3.12 не имеют официального Windows installer.
 
 Fedora/Linux x64:
 
@@ -52,6 +68,20 @@ $env:PYTHONPATH = 'src'
 Узкая проверка: `python -m unittest discover -s tests -p 'test_profiles.py' -v` с `PYTHONPATH=src`. Windows-specific Job Object/DACL tests запускаются на Windows; POSIX permissions — на Linux. Actual-helper smoke использует синтетические ключи и loopback endpoint, не интернет и не регистрацию.
 
 `fetch_vendor.py` получает только закреплённый `wgcf 2.3.1` и проверяет SHA256 до использования. `build_wireproxy.py` собирает `wireproxy 1.1.3` из закреплённых исходников (tarball и модуль `golang.zx2c4.com/wireguard`) с патчем `reserved-support`, проверяет SHA256 архива и печатает SHA256 результата. Ненулевой результат загрузчика или ошибка сборки запрещает продолжать со старыми бинарниками. Helpers, окружения и результаты сборок не хранятся в Git.
+
+### Сборка и offline smoke EXE
+
+На Windows после получения helpers:
+
+```powershell
+.venv\Scripts\python -m pip install --require-hashes -r requirements-build.txt
+.venv\Scripts\python -m PyInstaller --noconfirm --clean packaging/WarpPocket.spec
+.venv\Scripts\python scripts/ci_smoke.py --exe dist/WarpPocket.exe --out build/smoke
+```
+
+Smoke использует синтетический профиль и UDP endpoint `127.0.0.1:9`: он не регистрирует WARP и не обращается в интернет. Проверяются настоящее Tk-окно, вложенные helpers, TLS-сертификаты и лицензии, SOCKS-handshake и штатная очистка. Затем EXE запускается из пути с пробелами и кириллицей; драйвер завершает **только внутренний GUI PID**, записанный самим приложением, и проверяет исчезновение helper и закрытие порта. Убийство всего дерева не засчитывается как доказательство работы Job Object. В артефакт `WarpPocket-packaged-smoke` попадают только безопасные JSON-отчёты, не runtime-конфиги.
+
+Для отдельной приёмки на чистой Windows 10 x64 нужны запуск EXE без установленных Python/WireGuard и без повышения прав, реальный HTTPS через SOCKS5, поиск при непрерывном primary-трафике, повторное подключение и очистка после закрытия. Пока такой среды для проверки не было; результат Server 2022 CI не выдаётся за этот тест.
 
 ## Реальный сетевой gate: только явно
 

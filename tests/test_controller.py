@@ -164,10 +164,12 @@ class ControllerTests(unittest.TestCase):
         self.manager = manager or FakeManager()
         self.storage = storage or FakeStorage()
         self.profiles = profiles or FakeProfiles()
-        return Controller(storage=self.storage, profiles=self.profiles, backend=self.backend,
-                          finder=finder or self.finder, manager=self.manager,
-                          health=health or self.monitor_health, search_limit=search_limit,
-                          health_interval=health_interval, health_failures=health_failures)
+        controller = Controller(storage=self.storage, profiles=self.profiles, backend=self.backend,
+                                finder=finder or self.finder, manager=self.manager,
+                                health=health or self.monitor_health, search_limit=search_limit,
+                                health_interval=health_interval, health_failures=health_failures)
+        self.addCleanup(controller.close)
+        return controller
 
     def events(self, controller):
         return controller.poll_events()
@@ -287,6 +289,49 @@ class ControllerTests(unittest.TestCase):
         kinds = [event["type"] for event in self.events(controller)]
         self.assertIn("search_cancelled", kinds)
 
+    def test_cancelled_search_rejects_a_late_success(self):
+        finder = ScriptedFinder()
+        original_search = finder.search
+
+        def late_search(*args, **kwargs):
+            original_search(*args, **kwargs)
+            return SearchOutcome((CheckResult.now(Endpoint("188.114.97.1", 4500), 5, "primary"),), 1, False)
+
+        finder.search = late_search
+        controller = self.make_controller(finder=finder)
+        self.addCleanup(controller.close)
+        controller.start_search()
+        self.assertTrue(finder.search_started.wait(5))
+        controller.cancel_search()
+        finder.release.set()
+        self.assertTrue(wait_for(lambda: not controller.status()["searching"]))
+        self.assertIsNone(self.storage.saved)
+        self.assertIn("search_cancelled", [event["type"] for event in self.events(controller)])
+
+    def test_disconnect_blocks_reconnect_until_old_helper_has_stopped(self):
+        self.latency_map = {"188.114.96.1:4500": 12.0}
+        controller = self.make_controller()
+        self.addCleanup(controller.close)
+        controller.connect(consent=True)
+        self.assertTrue(wait_for(lambda: controller.state == ConnectionState.CONNECTED))
+        entered, release = threading.Event(), threading.Event()
+        original_stop = self.backend.stop
+
+        def delayed_stop(instance):
+            entered.set()
+            release.wait(5)
+            original_stop(instance)
+
+        self.backend.stop = delayed_stop
+        self.addCleanup(release.set)
+        controller.disconnect()
+        self.assertTrue(entered.wait(5))
+        profile_calls = len(self.profiles.calls)
+        controller.connect(consent=True)
+        self.assertEqual(len(self.profiles.calls), profile_calls)
+        release.set()
+        self.assertTrue(wait_for(lambda: self.backend.live == 0))
+
     def test_empty_search_result_does_not_replace_cache(self):
         old = CheckResult.now(Endpoint("8.6.112.5", 500), 99.0, "probe")
         controller = self.make_controller(storage=FakeStorage(cache=Cache(preferred=old)))
@@ -335,6 +380,35 @@ class ControllerTests(unittest.TestCase):
         self.backend.instance.process.alive = False
         self.assertTrue(wait_for(lambda: controller.state == ConnectionState.ERROR))
         self.assertEqual(controller.status()["code"], "proxy_exited")
+
+    def test_late_health_failure_cannot_stop_a_new_connection(self):
+        self.latency_map = {"188.114.96.1:4500": 12.0}
+        entered, release = threading.Event(), threading.Event()
+        first_thread = []
+
+        def delayed_failure(port, cancel=None):
+            if not first_thread:
+                first_thread.append(threading.current_thread())
+                entered.set()
+                release.wait(5)
+                raise AppError("health_timeout", "old connection")
+            return 12.0
+
+        controller = self.make_controller(health=delayed_failure, health_failures=1)
+        self.addCleanup(release.set)
+        controller.connect(consent=True)
+        self.assertTrue(entered.wait(5))
+        old_instance = self.backend.instance
+        controller.disconnect()
+        self.assertTrue(wait_for(lambda: old_instance.stopped and not controller.status()["busy"]))
+        controller.connect(consent=True)
+        self.assertTrue(wait_for(lambda: controller.state == ConnectionState.CONNECTED))
+        new_instance = self.backend.instance
+        release.set()
+        first_thread[0].join(5)
+        self.assertFalse(first_thread[0].is_alive())
+        self.assertEqual(controller.state, ConnectionState.CONNECTED)
+        self.assertFalse(new_instance.stopped)
 
     def test_health_success_resets_failure_counter(self):
         self.latency_map = {"188.114.96.1:4500": 12.0}

@@ -11,6 +11,7 @@ from tkinter import filedialog, messagebox, ttk
 import tkinter as tk
 
 from warppocket.controller import ConnectionState
+from warppocket.backend import bundled_root
 
 SOCKS_ADDRESS = "127.0.0.1:25344"
 PUMP_MS = 100
@@ -148,7 +149,12 @@ class WarpPocketApp:
 
     def _handle(self, event):
         kind = event.get("type")
-        if kind == "connect_progress":
+        if kind == "state":
+            if event.get("state") == ConnectionState.ERROR and event.get("code") == "consent_required":
+                self._ask_consent(probe=False)
+            if event.get("state") != ConnectionState.CONNECTING:
+                self._progress = ""
+        elif kind == "connect_progress":
             if event.get("stage") == "trying":
                 self._progress = f"Проверка {event.get('endpoint')}…"
         elif kind == "search_started":
@@ -185,10 +191,12 @@ class WarpPocketApp:
         state = status["state"]
         searching = status.get("searching", False)
         self._status.configure(text=STATUS_TEXT.get(state, str(state)))
-        self._connect.configure(text="Отключиться" if state == ConnectionState.CONNECTED else "Подключиться")
+        self._connect.configure(text={ConnectionState.CONNECTED: "Отключиться",
+                                      ConnectionState.CONNECTING: "Отмена"}.get(state, "Подключиться"))
         self._search.configure(text="Отменить поиск" if searching else "Найти новую стратегию")
-        self._connect.state(["disabled"] if searching or self._closing.is_set() else ["!disabled"])
-        self._search.state(["disabled"] if state == ConnectionState.CONNECTING or self._closing.is_set()
+        busy = status.get("busy", False) and state != ConnectionState.CONNECTING
+        self._connect.state(["disabled"] if (searching and state != ConnectionState.CONNECTED) or busy or self._closing.is_set() else ["!disabled"])
+        self._search.state(["disabled"] if state == ConnectionState.CONNECTING or busy or self._closing.is_set()
                            else ["!disabled"])
         endpoint = status.get("endpoint")
         latency = status.get("latency_ms")
@@ -212,7 +220,7 @@ class WarpPocketApp:
                 self._controller.connect(consent=True)
 
     def _on_connect(self):
-        if self._controller.status()["state"] == ConnectionState.CONNECTED:
+        if self._controller.status()["state"] in (ConnectionState.CONNECTED, ConnectionState.CONNECTING):
             self._controller.disconnect()
         else:
             self._controller.connect(consent=False)
@@ -232,7 +240,7 @@ class WarpPocketApp:
         if self._closing.is_set():
             return
         status = self._controller.status()
-        if status["state"] != ConnectionState.DISCONNECTED or status.get("searching"):
+        if status["state"] != ConnectionState.DISCONNECTED or status.get("searching") or status.get("busy"):
             self._show("Импорт", "Отключитесь и дождитесь завершения поиска перед импортом профиля.")
             return
         if self._importer is None:
@@ -258,7 +266,7 @@ class WarpPocketApp:
 
     def _on_licenses(self):
         self._show("Лицензии", "wireproxy — ISC, wgcf — MIT, списки эндпоинтов ros-scripts — MIT.\n"
-                               "Полные тексты: vendor/licenses в каталоге приложения.")
+                               f"Полные тексты: {bundled_root() / 'vendor/licenses'}")
 
     # -- shutdown ----------------------------------------------------------
 

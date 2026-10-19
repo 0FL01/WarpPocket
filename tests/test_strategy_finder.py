@@ -1,4 +1,5 @@
 import threading
+import time
 import unittest
 from base64 import b64encode
 
@@ -76,6 +77,32 @@ class FinderTests(unittest.TestCase):
 
     def explicit(self, *endpoints):
         return [Endpoint.parse(item) for item in endpoints]
+
+    def test_deadline_interrupts_an_inflight_trial_not_just_the_next_candidate(self):
+        def slow_health(port, cancel=None):
+            cancel.wait(2)
+            raise AppError("health_timeout", "timeout")
+
+        finder = StrategyFinder(self.backend, slow_health)
+        started = time.monotonic()
+        outcome = finder.search(make_profile(), role="primary", deadline_seconds=0.03,
+                                endpoints=self.explicit("188.114.96.1:4500", "188.114.97.1:4500"))
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(outcome.checked, 1)
+        self.assertFalse(outcome.cancelled)
+        self.assertEqual(self.backend.live, 0)
+
+    def test_successful_connect_is_not_stopped_when_old_deadline_expires(self):
+        finder = StrategyFinder(self.backend, lambda port, cancel=None: 12.0)
+        instance, _, _ = finder.connect(make_profile(), deadline_seconds=0.03,
+                                        candidates=self.explicit("188.114.96.1:4500"))
+        time.sleep(0.06)
+        self.assertFalse(instance.stopped)
+        self.backend.stop(instance)
+
+    def test_explicit_candidate_limit_cannot_exceed_contract(self):
+        endpoints = [Endpoint("188.114.96.1", port) for port in range(2000, 2040)]
+        self.assertEqual(len(self.finder.candidates(make_profile(), endpoints=endpoints, limit=100)), 30)
 
     def test_search_ranks_by_latency_and_stops_at_keep(self):
         self.health_map = {"188.114.96.1:4500": 30.0, "188.114.97.1:4500": 10.0, "188.114.98.1:4500": 20.0}

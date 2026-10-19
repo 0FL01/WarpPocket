@@ -23,14 +23,14 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
   - Source: reviewed plan steps 6-8.
   - Acceptance: successful strategies persist; background search never replaces the primary; all owned processes stop on cancel/close.
   - Primary evidence: finder/controller/UI tests and runtime smoke.
-  - Status: pending
-  - Evidence: R1 gate passed 2026-10-19; implementation is the current checkpoint. The controller must also call ProfileService.ensure_reserved for primary/probe.
+  - Status: verified
+  - Evidence: bounded sequential finder (30 candidates / 180 s deadline, probe-only while connected, active tunnel untouched), cancellation-safe controller with operation ids, mandatory ensure_reserved for primary/probe, and Tk UI implemented. Commit 215fac3 and Actions run 39237908290 verified the initial GUI. Packaging work reproduced and fixed missing consent prompts, cancel/late-result persistence, disconnect/reconnect ownership and stale monitor races; the deadline now interrupts the in-flight trial. Current local full suite: 147 tests OK (3 Windows-only skips), including real GUI/helper smoke.
 - R3: Windows onefile build, offline packaged smoke, documentation and Windows 10 acceptance.
   - Source: reviewed plan step 9 and done criteria.
   - Acceptance: Actions builds standalone EXE with the patched helper; offline smoke verifies resources and helper lifecycle; clean Windows 10 acceptance recorded separately.
   - Primary evidence: GitHub Actions and explicit Windows 10/VM test.
-  - Status: pending
-  - Evidence: pending.
+  - Status: in_progress
+  - Evidence: native PyInstaller spec and Windows packaging workflow implemented; offline GUI/helper smoke passes locally. Packaged artifact and crash verification require the next Actions run. Clean Windows 10 acceptance remains unverified.
 - R4: Commit and push the verified deliverable to git@github.com:0FL01/WarpPocket.git and inspect Actions.
   - Source: latest user implementation request.
   - Acceptance: commit exists on origin; Actions result or concrete blocker reported.
@@ -51,21 +51,21 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 
 ## Change Envelope
 - Target: this repository root, src/warppocket, tests, scripts, vendor metadata/licenses, dependency locks, README and .github/workflows.
-- Consumers: headless E2E (done); controller/Tk and Windows packaging next.
+- Consumers: headless E2E and controller/Tk (implemented); packaging/WarpPocket.spec and native Windows packaged smoke.
 - Allowed: Python stdlib, requests[socks], pinned PyInstaller, pinned Go build of patched wireproxy, verified wgcf; private runtime data in the user data directory.
 - Forbidden: tracked helper binaries, private profiles/accounts, live registration in ordinary CI, edits outside the repository.
 
 ## Current Checkpoint
-- Closes: R2 (bounded sequential finder, cancellation-safe controller, minimal Tk GUI).
-- Smallest next action: implement endpoints.py + strategy_finder.py with tests; then controller.py (including ensure_reserved for primary/probe); then ui.py/__main__.py with tests.
-- Expected evidence: focused unit tests, headless GUI smoke on Linux, then packaged smoke and Windows CI.
-- Stop or replan if: a frozen outcome proves unavailable; then record exact evidence and the smallest unlock.
+- Closes: R3 (Windows onefile build, offline packaged smoke, documentation).
+- Smallest next action: commit/push the locally verified package implementation, then inspect the native Windows build, packaged crash smoke and published artifact/checksum.
+- Expected evidence: green packaging job with artifact and smoke report (graceful close and forced kill of the inner GUI process); Windows 10 manual acceptance stays with the user.
+- Stop or replan if: the packaged smoke reveals a concrete failure; diagnose it and repeat the affected gate. Windows 10 acceptance requires an actual Windows 10 test environment.
 
 ## Current State
 - Resolved: R1 verified (reserved root cause fixed; patched helper built from pinned sources; opt-in gate passed locally). Vendor pipeline builds the patched helper in CI.
-- Last relevant evidence: 64 offline tests pass (3 platform skips); gate-report-2026-10-19.json; helper build prints its SHA256.
-- Blocker: none for R1. Windows 10 manual acceptance still outstanding for R3.
-- Next: R2 implementation, then R3.
+- Last relevant evidence: 147 offline tests pass (3 Windows-only skips) locally, including real application smoke. Previous native CI run: 39237908290. Current packaged build has not yet run in Actions.
+- Blocker: no local implementation blocker. Clean Windows 10 acceptance still needs an actual OS/VM; this Linux host exposes no virsh, QEMU, VirtualBox, Wine or PowerShell tools. Native Server 2022 CI is the available independent packaged test, not Windows 10 acceptance.
+- Next: R3 native packaged smoke and artifact, then record the remaining Windows 10 dependency separately.
 
 ## Root cause and fix (2026-10-19)
 - Cloudflare WARP requires the 3-byte `reserved` client id inside WireGuard messages. `wgcf` does not emit it; upstream `wireproxy` has no support (issue #72).
@@ -96,7 +96,9 @@ Operational notes: `engage.cloudflareclient.com:2408` consistently times out in 
 - 2026-10-19: user authorized remote testing; two networks reproduced the failure; API flags, DNS/MTU variants, old helper and fresh probe excluded as causes; remote cleanup verified.
 - 2026-10-19: root cause identified (reserved) and confirmed with a sing-box control; receive-side fix ported; production build pipeline and CI Go build added.
 - 2026-10-19: opt-in gate passed locally; reserved-support change set committed/pushed with Actions verification.
+- 2026-10-19: R2 verified: finder/controller/Tk UI implemented with 103 tests, live UI smoke and CI (Xvfb + native Windows) green; goal updated for R3.
+- 2026-10-19: R3 implementation added with real GUI smoke, pinned PyInstaller spec, native crash-driver tests and artifact workflow. Reproduced R2 consent/cancellation/ownership/deadline regressions fixed; local full suite 147 tests OK. Native packaged CI is next.
 
 ## Completion
-- Resolved outcomes: R1 verified; R4 verified. R2/R3 pending. Windows 10 acceptance outstanding.
-- Final status: active, continuing with R2.
+- Resolved outcomes: R1 verified; R2 verified; R4 verified. R3 in progress (packaging); Windows 10 acceptance outstanding.
+- Final status: active, continuing with R3.

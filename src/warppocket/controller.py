@@ -13,7 +13,8 @@ import threading
 from enum import Enum
 
 from warppocket.healthcheck import check_proxy
-from warppocket.models import AppError, Cache, CheckResult, Profile
+from warppocket.diagnostics import event as log_event
+from warppocket.models import AppError, Cache, CheckResult
 
 DEFAULT_SEARCH_LIMIT = 30
 DEFAULT_SEARCH_DEADLINE = 180.0
@@ -47,6 +48,8 @@ class Controller:
         self._active_result: CheckResult | None = None
         self._op_id = 0
         self._connect_cancel: threading.Event | None = None
+        self._connect_op: int | None = None
+        self._disconnecting = False
         self._search_cancel: threading.Event | None = None
         self._search_op: int | None = None
         self._search_role: str | None = None
@@ -69,6 +72,8 @@ class Controller:
                     "endpoint": self._active_result.endpoint if self._active_result else None,
                     "latency_ms": self._active_result.latency_ms if self._active_result else None,
                     "searching": self._search_op is not None,
+                    "busy": self._disconnecting or (self._connect_cancel is not None
+                                                   and self._state != ConnectionState.CONNECTED),
                     "search_role": self._search_role if self._search_op is not None else None}
 
     def poll_events(self) -> list[dict]:
@@ -88,12 +93,15 @@ class Controller:
                 return
             if self._state in (ConnectionState.CONNECTING, ConnectionState.CONNECTED):
                 return
+            if self._disconnecting or self._connect_cancel is not None:
+                return  # The cancelled primary still owns its identity/port.
             if self._search_op is not None:
                 self._emit({"type": "error", "code": "search_active",
                             "message": "Дождитесь завершения поиска или отмените его."})
                 return
             self._op_id += 1
             op_id = self._op_id
+            self._connect_op = op_id
             cancel = self._connect_cancel = threading.Event()
             self._state = ConnectionState.CONNECTING
             self._state_detail = (None, None)
@@ -102,17 +110,18 @@ class Controller:
 
     def disconnect(self):
         with self._lock:
-            if self._closed:
+            if self._closed or self._disconnecting:
                 return
+            self._disconnecting = True
             active, self._active = self._active, None
             self._active_result = None
             self._state = ConnectionState.DISCONNECTED
             self._state_detail = (None, None)
             self._op_id += 1  # invalidate any in-flight operation
             cancels = [item for item in (self._connect_cancel, self._search_cancel) if item]
-        self._health_stop.set()
-        for cancel in cancels:
-            cancel.set()
+            self._health_stop.set()
+            for cancel in cancels:
+                cancel.set()
         self._emit_state()
         self._spawn(lambda: self._disconnect_worker(active))
 
@@ -120,7 +129,7 @@ class Controller:
         with self._lock:
             if self._closed or self._search_op is not None:
                 return
-            if self._state == ConnectionState.CONNECTING:
+            if self._state == ConnectionState.CONNECTING or self._connect_cancel is not None or self._disconnecting:
                 self._emit({"type": "error", "code": "busy",
                             "message": "Дождитесь завершения подключения."})
                 return
@@ -134,9 +143,8 @@ class Controller:
 
     def cancel_search(self):
         with self._lock:
-            cancel = self._search_cancel
-        if cancel is not None:
-            cancel.set()
+            if self._search_cancel is not None:
+                self._search_cancel.set()
 
     def close(self):
         with self._lock:
@@ -166,59 +174,63 @@ class Controller:
     # -- workers -----------------------------------------------------------
 
     def _connect_worker(self, op_id: int, cancel: threading.Event, consent: bool):
+        instance = None
         try:
             self._profiles.ensure_profile("primary", consent=consent, cancel=cancel)
             profile = self._profiles.ensure_reserved("primary", cancel=cancel)
             cache = self._storage.load_cache()
-        except AppError as error:
-            self._connect_failure(op_id, error)
-            return
-        candidates = self._finder.candidates(profile, cache, limit=self._search_limit)
+            candidates = self._finder.candidates(profile, cache, limit=self._search_limit)
 
-        def stage(kind, **fields):
-            if self._connect_current(op_id) and not cancel.is_set():
-                self._emit({"type": "connect_progress", "stage": kind,
-                            **{key: str(value) if hasattr(value, "host") else value
-                               for key, value in fields.items()}})
+            def stage(kind, **fields):
+                if self._connect_current(op_id) and not cancel.is_set():
+                    self._emit({"type": "connect_progress", "stage": kind,
+                                **{key: str(value) if hasattr(value, "host") else value
+                                   for key, value in fields.items()}})
 
-        try:
             instance, latency, checked = self._finder.connect(profile, candidates=candidates,
                                                               cancel=cancel, on_stage=stage)
-        except AppError as error:
-            if error.code == "cancelled" or cancel.is_set():
-                self._connect_finished(op_id)
-            else:
-                self._connect_failure(op_id, error)
-            return
-        except Exception:
-            self._connect_failure(op_id, AppError("connect_failed", "Подключение прервано внутренней ошибкой."))
-            return
-        result = CheckResult.now(instance.endpoint, latency, "primary")
-        with self._lock:
-            stale = not self._connect_current_locked(op_id) or cancel.is_set()
-            if not stale:
+            result = CheckResult.now(instance.endpoint, latency, "primary")
+            with self._lock:
+                if not self._connect_current_locked(op_id) or cancel.is_set():
+                    return  # finally releases a late success before allowing reuse.
+                # Serialize cache publication with disconnect/cancel/search. A
+                # new search cannot overwrite this last_good from an old snapshot.
+                warning = self._commit_connected(cache, result)
                 self._active, self._active_result = instance, result
                 self._state = ConnectionState.CONNECTED
                 self._state_detail = (None, None)
-        if stale:
-            self._stop(instance)
+                self._connect_finished(op_id)
+                self._emit_state()
+                self._emit({"type": "warning", "code": warning.code, "message": str(warning)} if warning
+                           else {"type": "saved", "scope": "connect"})
+                self._start_health_monitor(instance)
+                instance = None  # Ownership has moved to the active connection.
+            self._log("connected", endpoint=result.endpoint, exit_code=None)
+        except AppError as error:
+            if error.code == "cancelled" or cancel.is_set():
+                with self._lock:
+                    if self._connect_current_locked(op_id):
+                        self._state = ConnectionState.DISCONNECTED
+                        self._emit_state()
+            else:
+                self._connect_failure(op_id, error)
+        except Exception:
+            self._connect_failure(op_id, AppError("connect_failed", "Подключение прервано внутренней ошибкой."))
+        finally:
+            if instance is not None:
+                self._stop(instance)
             self._connect_finished(op_id)
-            return
-        self._emit_state()
-        warning = self._commit_connected(cache, result)
-        self._emit({"type": "warning", "code": warning.code, "message": str(warning)} if warning
-                   else {"type": "saved", "scope": "connect"})
-        self._log("connected", endpoint=result.endpoint, exit_code=None)
-        self._connect_finished(op_id)
-        self._start_health_monitor()
 
     def _disconnect_worker(self, active):
-        if active is not None:
-            self._stop(active)
         try:
-            self._storage.clear_runtime()
-        except OSError:
-            pass
+            if active is not None:
+                self._stop(active)
+        finally:
+            with self._lock:
+                self._disconnecting = False
+            # Each backend owns its config. Global runtime cleanup is only
+            # safe at close, never while another operation can start a trial.
+            self._emit_state()
 
     def _search_worker(self, op_id: int, cancel: threading.Event, role: str, probe_consent: bool):
         try:
@@ -247,24 +259,26 @@ class Controller:
             self._emit({"type": "search_done", "found": 0, "checked": 0, "saved": False,
                         "code": "search_failed", "message": "Поиск прерван; сохранённые варианты не изменены."})
             return
-        if outcome.cancelled:
+        with self._lock:
+            # Checking the operation and writing its result is one transaction
+            # against cancel_search/disconnect/close, including late successes.
+            if outcome.cancelled or cancel.is_set() or not self._search_current(op_id):
+                self._search_end(op_id)
+                self._emit({"type": "search_cancelled"})
+                return
+            if not outcome.results:
+                self._search_end(op_id)
+                self._emit({"type": "search_done", "found": 0, "checked": outcome.checked, "saved": False,
+                            "code": "no_working_endpoint",
+                            "message": "Рабочие эндпоинты не найдены; сохранённые варианты не изменены."})
+                return
+            warning = self._commit_search(self._storage.load_cache(), outcome.results)
             self._search_end(op_id)
-            self._emit({"type": "search_cancelled"})
-            return
-        if not outcome.results:
-            self._search_end(op_id)
-            self._emit({"type": "search_done", "found": 0, "checked": outcome.checked, "saved": False,
-                        "code": "no_working_endpoint",
-                        "message": "Рабочие эндпоинты не найдены; сохранённые варианты не изменены."})
-            return
-        stored = self._search_current(op_id)
-        warning = self._commit_search(cache, outcome.results) if stored else None
-        self._search_end(op_id)
-        self._emit({"type": "search_done", "found": len(outcome.results), "checked": outcome.checked,
-                    "saved": stored and warning is None, "role": role,
-                    "best": str(outcome.results[0].endpoint)})
-        if warning is not None:
-            self._emit({"type": "warning", "code": warning.code, "message": str(warning)})
+            self._emit({"type": "search_done", "found": len(outcome.results), "checked": outcome.checked,
+                        "saved": warning is None, "role": role,
+                        "best": str(outcome.results[0].endpoint)})
+            if warning is not None:
+                self._emit({"type": "warning", "code": warning.code, "message": str(warning)})
 
     # -- cache commits -----------------------------------------------------
 
@@ -291,42 +305,46 @@ class Controller:
 
     # -- health monitoring -------------------------------------------------
 
-    def _start_health_monitor(self):
+    def _start_health_monitor(self, instance):
         self._health_stop = threading.Event()
-        self._spawn(self._health_loop, daemon=True)
+        stop = self._health_stop
+        self._spawn(lambda: self._health_loop(instance, stop), daemon=True)
 
-    def _health_loop(self):
+    def _health_loop(self, instance, stop):
         failures = 0
-        while not self._health_stop.wait(self._health_interval):
+        while not stop.wait(self._health_interval):
             with self._lock:
-                instance = self._active
-                if instance is None or self._closed or self._state != ConnectionState.CONNECTED:
+                if self._active is not instance or self._closed or self._state != ConnectionState.CONNECTED:
                     return
             if instance.process.poll() is not None:
-                self._health_failure("proxy_exited", "Сетевой компонент неожиданно завершился.")
+                self._health_failure(instance, stop, "proxy_exited", "Сетевой компонент неожиданно завершился.")
                 return
             try:
-                self._health(instance.port, cancel=self._health_stop)
+                self._health(instance.port, cancel=stop)
                 failures = 0
             except AppError:
-                if self._health_stop.is_set():
+                if stop.is_set():
                     return
                 failures += 1
                 if failures >= self._health_failures:
-                    self._health_failure("connection_lost", "Соединение WARP перестало отвечать; прокси остановлен.")
+                    self._health_failure(instance, stop, "connection_lost", "Соединение WARP перестало отвечать; прокси остановлен.")
                     return
 
-    def _health_failure(self, code: str, message: str):
+    def _health_failure(self, instance, stop, code: str, message: str):
         with self._lock:
-            if self._closed:
+            if self._closed or stop.is_set() or self._active is not instance:
                 return
-            instance, self._active = self._active, None
+            self._active = None
+            self._disconnecting = True
             self._active_result = None
             self._state = ConnectionState.ERROR
             self._state_detail = (code, message)
-        self._health_stop.set()
-        if instance is not None:
+        stop.set()
+        try:
             self._stop(instance)
+        finally:
+            with self._lock:
+                self._disconnecting = False
         self._emit_state()
 
     # -- helpers -----------------------------------------------------------
@@ -344,8 +362,9 @@ class Controller:
 
     def _connect_finished(self, op_id: int):
         with self._lock:
-            if self._op_id == op_id:
+            if self._connect_op == op_id:
                 self._connect_cancel = None
+                self._connect_op = None
 
     def _connect_failure(self, op_id: int, error: AppError):
         with self._lock:
@@ -353,7 +372,7 @@ class Controller:
             if current:
                 self._state = ConnectionState.ERROR
                 self._state_detail = (error.code, str(error))
-                self._connect_cancel = None
+                self._connect_finished(op_id)
         if current:
             self._emit_state()
 
@@ -385,7 +404,7 @@ class Controller:
     def _log(self, code: str, **fields):
         if self._logger is not None:
             try:
-                self._logger(code, **fields)
+                log_event(self._logger, code, **fields)
             except Exception:
                 pass
 

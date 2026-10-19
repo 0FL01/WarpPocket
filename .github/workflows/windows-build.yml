@@ -51,6 +51,53 @@ jobs:
       - name: Install Xvfb
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb
-      - name: UI tests under Xvfb
+      - name: UI and application smoke tests under Xvfb
         if: runner.os == 'Linux'
-        run: xvfb-run -a python -m unittest discover -s tests -p 'test_ui.py' -v
+        run: |
+          xvfb-run -a python -m unittest discover -s tests -p 'test_ui.py' -v
+          xvfb-run -a python -m unittest discover -s tests -p 'test_smoke.py' -v
+
+  package:
+    name: Windows onefile package
+    needs: tests
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13.16'
+          architecture: x64
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.9'
+          cache: false
+      - name: Install locked build dependencies
+        run: python -m pip install --require-hashes -r requirements-build.txt
+      - name: Build patched wireproxy from pinned sources
+        run: python scripts/build_wireproxy.py --platform windows-amd64
+      - name: Fetch and verify wgcf
+        run: python scripts/fetch_vendor.py --platform windows-amd64
+      - name: Build standalone windowed executable
+        run: python -m PyInstaller --noconfirm --clean packaging/WarpPocket.spec
+      - name: Packaged smoke (normal close and inner GUI crash)
+        run: python scripts/ci_smoke.py --exe dist/WarpPocket.exe --out build/smoke
+      - name: Write SHA256
+        run: python -c "import hashlib,pathlib; p=pathlib.Path('dist/WarpPocket.exe'); digest=hashlib.sha256(p.read_bytes()).hexdigest(); p.with_suffix('.exe.sha256').write_text(digest + '  WarpPocket.exe\n', encoding='ascii'); print(digest)"
+      - name: Upload executable and checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: WarpPocket-windows-x64
+          path: |
+            dist/WarpPocket.exe
+            dist/WarpPocket.exe.sha256
+          if-no-files-found: error
+      - name: Upload safe smoke reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: WarpPocket-packaged-smoke
+          path: build/smoke/*.json
+          if-no-files-found: warn

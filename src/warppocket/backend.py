@@ -11,13 +11,18 @@ from pathlib import Path
 
 from warppocket.models import AppError, Endpoint, Profile
 from warppocket.profiles import render_profile
+from warppocket.process_manager import ProcessCancelled
 from warppocket.storage import AppPaths, atomic_write
+
+
+def bundled_root() -> Path:
+    return Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[2]
 
 
 def bundled_binary(name: str) -> Path:
     if platform.machine().lower() not in ("amd64", "x86_64") or sys.platform not in ("linux", "win32"):
         raise AppError("platform_unsupported", "Поддерживаются Windows/Linux x64.")
-    root = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[2]
+    root = bundled_root()
     target = "windows-amd64" if sys.platform == "win32" else "linux-amd64"
     result = root / "vendor" / target / (name + (".exe" if sys.platform == "win32" else ""))
     if not result.is_file():
@@ -86,6 +91,8 @@ class WireProxyBackend:
                 if process is not None:
                     self.manager.stop(process)
                 config.unlink(missing_ok=True)
+                if isinstance(error, ProcessCancelled):
+                    raise AppError("cancelled", "Запуск прокси отменён.") from None
                 if port is None and attempt < 2 and isinstance(error, AppError) and error.code == "proxy_start_failed":
                     continue
                 raise

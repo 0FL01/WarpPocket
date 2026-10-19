@@ -46,7 +46,17 @@ def _diagnostics_text(paths: AppPaths) -> str:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="WarpPocket", description="Локальный SOCKS5 через Cloudflare WARP.")
     parser.add_argument("--data-dir", type=Path, help="каталог данных (по умолчанию — системный)")
+    smoke = parser.add_mutually_exclusive_group()
+    smoke.add_argument("--smoke", type=Path, help="автономная проверка сборки и выход")
+    smoke.add_argument("--smoke-wait", type=Path, help="проверка сборки с ожиданием принудительного завершения")
     args = parser.parse_args(argv)
+
+    if args.smoke or args.smoke_wait:
+        from warppocket.smoke import run_smoke
+
+        target = args.smoke or args.smoke_wait
+        return run_smoke(target.expanduser().resolve(), wait=bool(args.smoke_wait))
+
     paths = AppPaths(args.data_dir.expanduser().resolve()) if args.data_dir else AppPaths.default()
 
     lock = InstanceLock(paths.root)

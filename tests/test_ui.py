@@ -97,14 +97,14 @@ class UiTests(unittest.TestCase):
         controller = FakeController()
         app = self.make(controller, confirm=lambda title, text: True)
         app._on_connect()
-        controller.push({"type": "error", "code": "consent_required", "message": "нужно согласие"})
+        controller.push({"type": "state", "state": "error", "code": "consent_required", "message": "нужно согласие"})
         app.process_events()
         self.assertEqual(controller.calls, [("connect", False), ("connect", True)])
 
     def test_declined_consent_does_not_connect(self):
         controller = FakeController()
         app = self.make(controller, confirm=lambda title, text: False)
-        controller.push({"type": "error", "code": "consent_required", "message": "нужно согласие"})
+        controller.push({"type": "state", "state": "error", "code": "consent_required", "message": "нужно согласие"})
         app.process_events()
         self.assertEqual(controller.calls, [])
 
@@ -120,6 +120,15 @@ class UiTests(unittest.TestCase):
         self.assertIn("162.159.192.1:2408", app._endpoint.cget("text"))
         self.assertIn("82 мс", app._endpoint.cget("text"))
 
+    def test_connecting_button_cancels_instead_of_starting_again(self):
+        controller = FakeController()
+        controller.state = ConnectionState.CONNECTING
+        app = self.make(controller)
+        app._render()
+        self.assertEqual(app._connect.cget("text"), "Отмена")
+        app._on_connect()
+        self.assertEqual(controller.calls, [("disconnect",)])
+
     def test_search_toggle_progress_and_cancel(self):
         controller = FakeController()
         controller.state = ConnectionState.CONNECTED
@@ -128,7 +137,7 @@ class UiTests(unittest.TestCase):
         self.assertEqual(controller.calls, [("start_search", False)])
         app._render()
         self.assertEqual(app._search.cget("text"), "Отменить поиск")
-        self.assertEqual(app._connect.state(), ("disabled",))
+        self.assertNotIn("disabled", app._connect.state())  # Disconnect remains available during probe search.
         controller.push({"type": "search_progress", "checked": 3, "limit": 30, "found": 1})
         app.process_events()
         app._render()
