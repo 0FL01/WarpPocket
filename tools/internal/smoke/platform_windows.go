@@ -38,7 +38,7 @@ const (
 	processQueryInfo    = 0x0400
 	processVMRead       = 0x0010
 	createSuspended     = 0x00000004
-	createNoWindow      = 0x08000000
+	detachedProcess     = 0x00000008
 	extendedStartup     = 0x00080000
 	handleListAttribute = 0x00020002
 	killOnJobClose      = 0x00002000
@@ -210,8 +210,11 @@ func (windowsPlatform) Launch(argv []string, cwd string) (Launch, error) {
 	startup.AttributeList = attributeList
 	// Assignment happens while the primary thread is still suspended. Only NUL
 	// can be inherited; in particular the safety-job handle never enters the GUI.
+	// DETACHED_PROCESS avoids allocating even a hidden console. CREATE_NO_WINDOW
+	// spawns conhost.exe for console test fixtures, polluting the owned process
+	// set and footprint. Both actual application modes use the GUI subsystem.
 	err = syscall.CreateProcess(executable, command, nil, nil, true,
-		createSuspended|createNoWindow|extendedStartup, nil, directory, &startup.StartupInfo, &info)
+		createSuspended|detachedProcess|extendedStartup, nil, directory, &startup.StartupInfo, &info)
 	if err != nil {
 		return nil, failure("process_create_failed")
 	}

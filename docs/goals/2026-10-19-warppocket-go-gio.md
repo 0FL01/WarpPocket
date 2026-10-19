@@ -75,13 +75,13 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 
 ## Current Checkpoint
 - Closes: native Windows parity portions of R1–R4 and measured R5 footprint.
-- Smallest next action: push the Go-only retirement/canonical workflow and corrected smoke path fixtures to the migration branch; inspect native Windows storage/process tests, real clipboard/profile import/picker/same-EXE crash smoke and all-process measurements against the pinned old EXE.
+- Smallest next action: confirm the corrected detached native launch on the migration branch, then inspect Windows storage/process tests, real clipboard/profile import/picker/same-EXE crash smoke and all-process measurements against the pinned old EXE.
 - Expected evidence: successful Linux/Windows Go tests and native packaged smoke plus safe footprint comparison. Only then deliver master and compare its sole rolling EXE asset with the tested artifact.
 - Replan if: an observed native failure exposes a concrete ABI, graphics or ownership cause; diagnose it rather than weakening a gate or publishing the bootstrap demo.
 
 ## Current State
 - Baseline: b3239e85e8ffcc2ce1d4f9d3286922f6d1ac31ea; old Windows EXE 29,484,399 bytes. Existing primary/probe private identities and verified split-routing/DNS behavior are available for reuse.
-- Last evidence: all root/tool race tests and vet pass; freshly prepared DNS/routing/sandbox/worker gates pass after old source-payload removal; 21 native rendered state/DPI frames and real X11 same-EXE smoke pass. Real saved-profile network gate remains 58 requests/zero errors with no API/registration. Full Windows cross-build succeeds. Go-only retirement is pushed as de4b409. Native retry 39286533619 passed Linux and the corrected path-alias fixtures; it then exposed Windows checkout CRLF changes to digest-pinned payloads and a working-set assertion before the synthetic engine had acknowledged startup. LF checkout attributes and an explicit child-readiness handshake are added; native retry still required, hashes/security assertions unchanged. Owned temporary diagnostics/failed synthetic smoke workspaces removed; user data/design/.venv untouched.
+- Last evidence: all root/tool race tests and vet pass; freshly prepared DNS/routing/sandbox/worker gates pass after old source-payload removal; 21 native rendered state/DPI frames and real X11 same-EXE smoke pass. Real saved-profile network gate remains 58 requests/zero errors with no API/registration. Full Windows cross-build succeeds. Go-only retirement is pushed as de4b409; LF checkout attributes fixed native payload digests. Native diagnostics from run 39288154565 identified the remaining working-set mismatch exactly: CREATE_NO_WINDOW allocated a conhost.exe for each console-subsystem test helper, giving four owned processes rather than two. Use DETACHED_PROCESS with the same explicit NUL handles/suspended job assignment to avoid allocating consoles; retain the exact two-process working-set/owner-crash assertion. Native retry still required. Owned temporary diagnostics/failed synthetic smoke workspaces removed; user data/design/.venv untouched.
 - Blocker: no established local blocker. GitHub reports critical Actions/Pages/Webhooks degradation (incident 8tzbpcnl75jp, 2026-10-19 15:49 UTC), delaying queue/result updates; the observed Windows test failure remains actionable and a corrected native retry is required.
 - Next: corrected canonical Go-only CI on migration branch; native smoke/footprint, then master/rolling delivery if all gates pass.
 
@@ -90,6 +90,7 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 - 2026-10-19: Crayon light HANDOFF/CSS/mockups take precedence over stale dark design-system text. No preview demo behavior is part of the product.
 - 2026-10-19: retire the old runtime only on the isolated migration branch after local Go parity; do not merge or replace the verified rolling EXE until the native Windows/core/GUI/lifecycle and footprint gates pass.
 - 2026-10-19: Windows checkout must preserve exact LF bytes of embedded, digest-pinned Go payloads; enforce this in .gitattributes, never by accepting a changed source hash. Native memory fixtures must acknowledge execution rather than equating ResumeThread with application readiness.
+- 2026-10-19: the smoke launcher detaches from consoles rather than hiding newly allocated consoles. This prevents test-only conhost.exe workers from contaminating exact owned-process/footprint proof; explicit NUL-only handles, suspended safety-job assignment and GUI-only termination remain unchanged.
 
 ## Checkpoint History
 - 2026-10-19: approved plan copied here with the latest Python-tests-only amendment; implementation begins.
@@ -97,6 +98,7 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 - 2026-10-19: early native Windows frames verified (39274301008); core Go storage/API/process/controller/UI and isolated preparation integrated. Real Go network acceptance passed without API/registration, with 58 uninterrupted primary HTTPS requests during probe and transport/cleanup proof. Full Windows native integration and measured comparison are next.
 - 2026-10-19: Go-only source/tools/CI retirement and local closure gates pass. Native Windows tool-fixture alias failure reproduced/fixed without changing validation; X11 smoke passes after isolating a compositor-only EGL hang. Corrected native pipeline and measured Windows acceptance remain mandatory before master publication.
 - 2026-10-19: de4b409 published the Go-only migration branch; Linux canonical CI passed. Remaining observed native payload-line-ending and synthetic readiness failures addressed without dropping tests or weakening digest/working-set requirements; rerun native CI next.
+- 2026-10-19: native structured process identities disproved an engine-readiness explanation for the count mismatch and identified two hidden console hosts. Detached launch added; native owner-crash/count checks are retained for the next run.
 
 ## Completion
 - Pending required outcomes; no migration completion claim yet.
