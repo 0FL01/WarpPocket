@@ -62,6 +62,15 @@ class Profile:
     mtu: int = 1280
     keepalive: int = 0
     preshared_key: str | None = field(default=None, repr=False)
+    reserved: tuple[int, int, int] | None = None
+
+    def __post_init__(self):
+        if self.reserved is not None and (
+            not isinstance(self.reserved, tuple)
+            or len(self.reserved) != 3
+            or any(type(value) is not int or not 0 <= value <= 255 for value in self.reserved)
+        ):
+            raise ValueError("invalid reserved bytes")
 
     def identity(self) -> bytes:
         key = bytearray(base64.b64decode(self.private_key, validate=True))

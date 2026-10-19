@@ -37,6 +37,8 @@ from urllib.request import (
 
 ROOT = Path(__file__).resolve().parents[1]
 PLATFORMS = ("linux-amd64", "windows-amd64")
+# wireproxy is built from source by scripts/build_wireproxy.py; binary_name still
+# knows its name so generic archived-helper handling and tests stay usable.
 NAMES = ("wireproxy", "wgcf")
 MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
 MAX_BINARY_BYTES = 64 * 1024 * 1024
@@ -101,13 +103,15 @@ def load_manifest(root: Path = ROOT) -> list[dict[str, str]]:
             or parsed.fragment
         ):
             raise VendorError("Artifact URL must be a fixed upstream HTTPS release")
-        if name == "wireproxy":
-            if artifact.get("archive_member") != target or not url.endswith(".tar.gz"):
-                raise VendorError("Unexpected wireproxy archive member")
+        if name == "wgcf":
+            if "archive_member" in artifact:
+                raise VendorError("wgcf must be a raw executable, not an archive")
         elif "archive_member" in artifact:
-            raise VendorError("wgcf must be a raw executable, not an archive")
-    if seen != {(platform, name) for platform in PLATFORMS for name in NAMES}:
-        raise VendorError("Manifest must contain exactly the four supported artifacts")
+            # Reserved for archived helpers; wireproxy is built from sources now.
+            if artifact.get("archive_member") != target or not url.endswith(".tar.gz"):
+                raise VendorError("Unexpected archive member for an archived helper")
+    if seen != {(platform, "wgcf") for platform in PLATFORMS}:
+        raise VendorError("Manifest must contain exactly the two supported wgcf artifacts")
     return artifacts
 
 

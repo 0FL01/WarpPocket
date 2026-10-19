@@ -61,7 +61,8 @@ def paths_run_gate(storage, manager, report, args, stage, traffic_stop, traffic_
     cancel = threading.Event()
     used_ports = set()
     try:
-        primary = profiles.ensure_profile("primary", consent=args.accept_tos, cancel=cancel)
+        profiles.ensure_profile("primary", consent=args.accept_tos, cancel=cancel)
+        primary = profiles.ensure_reserved("primary", cancel=cancel)
         stage("primary_profile_ready")
         candidates = list(dict.fromkeys([primary.endpoint, *args.endpoint,
                                         Endpoint("162.159.192.1", 2408), Endpoint("162.159.193.1", 2408),
@@ -118,7 +119,8 @@ def paths_run_gate(storage, manager, report, args, stage, traffic_stop, traffic_
 
         traffic_thread = threading.Thread(target=traffic, name="e2e-primary-traffic")
         traffic_thread.start()
-        probe = profiles.ensure_profile("probe", consent=args.accept_probe_tos, cancel=cancel)
+        profiles.ensure_profile("probe", consent=args.accept_probe_tos, cancel=cancel)
+        probe = profiles.ensure_reserved("probe", cancel=cancel)
         stage("probe_profile_ready")
         probe_successes = 0
         for endpoint in candidates[:6]:

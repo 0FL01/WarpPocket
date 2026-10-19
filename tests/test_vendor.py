@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import shutil
 import ssl
 import tarfile
 import tempfile
@@ -25,6 +26,15 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC is not None and SPEC.loader is not None
 vendor = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(vendor)
+BUILD_SPEC = importlib.util.spec_from_file_location(
+    "warppocket_build_wireproxy", ROOT / "scripts" / "build_wireproxy.py"
+)
+assert BUILD_SPEC is not None and BUILD_SPEC.loader is not None
+builder = importlib.util.module_from_spec(BUILD_SPEC)
+BUILD_SPEC.loader.exec_module(builder)
+
+WGCF_LINUX_SHA256 = "4fb7a136aa470ece11d17949c7db07b040ec9c604742dc8680bcf1889f85d0c8"
+WGCF_WINDOWS_SHA256 = "e222fd9443d7cb3264d825a3e86967797fc9c938507c5d93e3cc21e4aed11dcc"
 
 
 class Response(io.BytesIO):
@@ -64,11 +74,22 @@ class VendorTests(unittest.TestCase):
         self.addCleanup(self.open_patch.stop)
 
     def record(self, name: str, payload: bytes, platform: str = "linux-amd64") -> dict:
-        record = copy.deepcopy(next(
-            item for item in self.manifest["artifacts"]
-            if item["name"] == name and item["platform"] == platform
-        ))
-        record["sha256"] = hashlib.sha256(payload).hexdigest()
+        record = {
+            "platform": platform,
+            "name": name,
+            "version": "0.0.0",
+            "url": (
+                f"https://github.com/windtf/wireproxy/releases/download/v0.0.0"
+                f"/wireproxy_{platform}.tar.gz"
+                if name == "wireproxy"
+                else f"https://github.com/ViRb3/wgcf/releases/download/v0.0.0/{name}"
+            ),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+        if name == "wireproxy":
+            record["archive_member"] = (
+                "wireproxy.exe" if platform == "windows-amd64" else "wireproxy"
+            )
         return record
 
     def respond(self, payload: bytes, *, length: int | None = None):
@@ -85,13 +106,16 @@ class VendorTests(unittest.TestCase):
 
     def test_manifest_has_exact_supported_targets(self):
         records = vendor.load_manifest()
-        self.assertEqual(len(records), 4)
+        self.assertEqual(len(records), 2)
         self.assertEqual(
             {vendor.binary_name(item["platform"], item["name"]) for item in records},
-            {"wireproxy", "wireproxy.exe", "wgcf", "wgcf.exe"},
+            {"wgcf", "wgcf.exe"},
         )
-        self.assertEqual(records[0]["sha256"],
-                         "e88c1d090740373fc606c1bafd81d9a5eadc642cce5667616e20e9d7a444f51c")
+        digests = {record["platform"]: record["sha256"] for record in records}
+        self.assertEqual(digests, {
+            "linux-amd64": WGCF_LINUX_SHA256,
+            "windows-amd64": WGCF_WINDOWS_SHA256,
+        })
 
     def test_raw_success_is_atomic_and_executable(self):
         payload = b"verified-linux-executable"
@@ -127,7 +151,7 @@ class VendorTests(unittest.TestCase):
         self.assert_clean_directory(["wireproxy"])
 
     def test_windows_targets_have_exe_extension(self):
-        for name in vendor.NAMES:
+        for name in ("wgcf", "wireproxy"):
             with self.subTest(name=name):
                 binary = b"windows-binary"
                 payload = (make_archive([("wireproxy.exe", tarfile.REGTYPE, binary)])
@@ -240,19 +264,16 @@ class VendorTests(unittest.TestCase):
         self.assert_clean_directory([])
 
     def test_fetch_platform_uses_deterministic_manifest_targets(self):
-        binary = b"wireproxy-binary"
-        archive = make_archive([("wireproxy", tarfile.REGTYPE, binary)])
         raw = b"wgcf-binary"
         for artifact in self.manifest["artifacts"]:
             if artifact["platform"] == "linux-amd64":
-                payload = archive if artifact["name"] == "wireproxy" else raw
-                artifact["sha256"] = hashlib.sha256(payload).hexdigest()
+                artifact["sha256"] = hashlib.sha256(raw).hexdigest()
         self.write_manifest(self.manifest)
-        self.opener.open.side_effect = [Response(archive), Response(raw)]
+        self.opener.open.side_effect = [Response(raw)]
         paths = vendor.fetch_platform("linux-amd64", root=self.root)
-        self.assertEqual(paths, [self.directory / "wireproxy", self.directory / "wgcf"])
-        self.assertEqual([path.read_bytes() for path in paths], [binary, raw])
-        self.assert_clean_directory(["wgcf", "wireproxy"])
+        self.assertEqual(paths, [self.directory / "wgcf"])
+        self.assertEqual([path.read_bytes() for path in paths], [raw])
+        self.assert_clean_directory(["wgcf"])
         self.assertFalse((self.root / "vendor" / "windows-amd64").exists())
 
     def test_manifest_rejects_unfixed_sources_and_bad_records(self):
@@ -293,6 +314,104 @@ class VendorTests(unittest.TestCase):
             self.assertEqual(vendor.main(["--platform", "linux-amd64"]), 1)
         self.assertEqual(output.getvalue(), "")
         self.assertIn("Do not use cached helpers", error.getvalue())
+
+
+class WireproxyBuildTests(unittest.TestCase):
+    """Offline checks for the pinned source-build inputs and target mapping."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="warppocket-build-tests-")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.pins = json.loads(
+            (ROOT / "vendor" / "wireproxy-build.json").read_text("utf-8")
+        )
+
+    def mutated(self, path: str, value) -> dict:
+        data = copy.deepcopy(self.pins)
+        target = data
+        keys = path.split(".")
+        for key in keys[:-1]:
+            target = target[key]
+        target[keys[-1]] = value
+        return data
+
+    def write_pins(self, pins: dict):
+        path = self.root / "vendor" / "wireproxy-build.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(pins), encoding="utf-8")
+
+    def test_checked_in_pins_are_valid_and_pinned(self):
+        pins = builder.load_pins()
+        self.assertEqual(pins["schema_version"], 1)
+        self.assertEqual(pins["patch"], "reserved-support")
+        self.assertEqual(pins["wireproxy"]["version"], "1.1.3")
+        self.assertEqual(pins["wireproxy"]["url"],
+                         "https://github.com/windtf/wireproxy/archive/refs/tags/v1.1.3.tar.gz")
+        self.assertEqual(pins["wireproxy"]["sha256"],
+                         "b62e925d9efe402a14c6501dfa56137c49ece6a5be264095295d2565d747b1c7")
+        self.assertEqual(pins["wireguard"]["module"], "golang.zx2c4.com/wireguard")
+        self.assertEqual(pins["wireguard"]["version"], "v0.0.0-20250521234502-f333402bd9cb")
+
+    def test_pins_reject_unfixed_sources_and_bad_records(self):
+        cases = {
+            "http-url": self.mutated(
+                "wireproxy.url",
+                "http://github.com/windtf/wireproxy/archive/refs/tags/v1.1.3.tar.gz",
+            ),
+            "foreign-host": self.mutated(
+                "wireproxy.url",
+                "https://example.org/windtf/wireproxy/archive/refs/tags/v1.1.3.tar.gz",
+            ),
+            "wrong-tag": self.mutated(
+                "wireproxy.url",
+                "https://github.com/windtf/wireproxy/archive/refs/tags/v9.9.9.tar.gz",
+            ),
+            "bad-digest": self.mutated("wireproxy.sha256", "not-a-digest"),
+            "uppercase-digest": self.mutated("wireproxy.sha256", "B62E925D9EFE402A14C6501DFA56137C49ECE6A5BE264095295D2565D747B1C7"),
+            "foreign-module": self.mutated("wireguard.module", "example.com/wireguard"),
+            "unpinned-version": self.mutated("wireguard.version", "v1.2.3"),
+            "bad-schema": self.mutated("schema_version", 2),
+        }
+        for label, data in cases.items():
+            with self.subTest(label=label):
+                self.write_pins(data)
+                with self.assertRaises(builder.BuildError):
+                    builder.load_pins(self.root)
+
+    def test_build_targets_map_to_fixed_goos_goarch_and_names(self):
+        self.assertEqual(builder.target_for("linux-amd64"), ("linux", "amd64", "wireproxy"))
+        self.assertEqual(builder.target_for("windows-amd64"),
+                         ("windows", "amd64", "wireproxy.exe"))
+        with self.assertRaises(builder.BuildError):
+            builder.target_for("darwin-arm64")
+
+    def test_source_extraction_accepts_only_safe_regular_members(self):
+        good = make_archive([
+            ("wireproxy-1.1.3", tarfile.DIRTYPE, b""),
+            ("wireproxy-1.1.3/go.mod", tarfile.REGTYPE, b"module wireproxy\n"),
+            ("wireproxy-1.1.3/cmd", tarfile.DIRTYPE, b""),
+            ("wireproxy-1.1.3/cmd/app.go", tarfile.REGTYPE, b"package main\n"),
+        ])
+        root = builder.extract_source(good, "1.1.3")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        self.assertEqual((root / "go.mod").read_bytes(), b"module wireproxy\n")
+        self.assertEqual((root / "cmd" / "app.go").read_bytes(), b"package main\n")
+
+        unsafe = {
+            "traversal": [("wireproxy-1.1.3/../outside", tarfile.REGTYPE, b"x")],
+            "absolute": [("/wireproxy-1.1.3/go.mod", tarfile.REGTYPE, b"x")],
+            "symlink": [("wireproxy-1.1.3/go.mod", tarfile.SYMTYPE, b"")],
+            "hardlink": [("wireproxy-1.1.3/go.mod", tarfile.LNKTYPE, b"")],
+            "fifo": [("wireproxy-1.1.3/go.mod", tarfile.FIFOTYPE, b"")],
+            "empty": [("wireproxy-1.1.3/go.mod", tarfile.REGTYPE, b"")],
+            "foreign-root": [("other-1.1.3/go.mod", tarfile.REGTYPE, b"x")],
+        }
+        for label, entries in unsafe.items():
+            with self.subTest(label=label):
+                with self.assertRaises(builder.BuildError):
+                    builder.extract_source(make_archive(entries), "1.1.3")
+        self.assertFalse((self.root / "outside").exists())
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # Goal: WarpPocket MVP
 
-Status: blocked
+Status: active
 Source: docs/origin.md; reviewed conversation plan; user request to implement, commit and push.
 Last updated: 2026-10-19
 
@@ -17,119 +17,86 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
   - Source: reviewed plan, mandatory network gate.
   - Acceptance: explicit opt-in E2E succeeds; failure is reported without false connected status.
   - Primary evidence: scripts/e2e_network.py and focused unit tests.
-  - Status: blocked
-  - Evidence: two registered, distinct identities with API-confirmed active/enabled and warp_enabled=true; both networks tested. Proxmox fresh-probe trial failed all 30 candidates. The responsive endpoint permits handshake/TCP/TLS, but no acceptance HTTP response; independent curl with upstream helpers 1.1.3 and 1.0.9 reproduces it, while direct control gets Cloudflare 200/warp=off and Google 204. IPv6 bootstrap has no local route. No working WARP data path or dual-profile continuity is claimed; cleanup verified.
+  - Status: verified
+  - Evidence: root cause fixed (24-bit `reserved` client id). Opt-in gate passed locally on 2026-10-19 (gate-report-2026-10-19.json): primary 188.114.96.1:4500 verified (417.19 ms); after full stop 188.114.97.1:4500 verified (327.0 ms); saved profile reused without registration (pid 1340599); separate probe verified on 188.114.96.1:4500 while primary HTTPS ran continuously (6 requests, 0 failures, pid/port/profile unchanged); cleanup_verified. 64 offline tests pass with 3 platform skips.
 - R2: Persistent bounded sequential search, cancellation-safe controller and minimal Tk GUI.
   - Source: reviewed plan steps 6-8.
   - Acceptance: successful strategies persist; background search never replaces the primary; all owned processes stop on cancel/close.
   - Primary evidence: finder/controller/UI tests and runtime smoke.
-  - Status: blocked
-  - Evidence: R1 must pass before GUI implementation.
+  - Status: pending
+  - Evidence: R1 gate passed 2026-10-19; implementation is the current checkpoint. The controller must also call ProfileService.ensure_reserved for primary/probe.
 - R3: Windows onefile build, offline packaged smoke, documentation and Windows 10 acceptance.
   - Source: reviewed plan step 9 and done criteria.
-  - Acceptance: Actions builds standalone EXE; owner-crash smoke verifies Job Objects; clean Windows 10 acceptance recorded separately.
+  - Acceptance: Actions builds standalone EXE with the patched helper; offline smoke verifies resources and helper lifecycle; clean Windows 10 acceptance recorded separately.
   - Primary evidence: GitHub Actions and explicit Windows 10/VM test.
-  - Status: blocked
-  - Evidence: R1 network gate blocks GUI/onefile delivery; Windows 10 manual acceptance also remains outstanding. Headless Linux/Windows CI is configured separately.
+  - Status: pending
+  - Evidence: pending.
 - R4: Commit and push the verified deliverable to git@github.com:0FL01/WarpPocket.git and inspect Actions.
   - Source: latest user implementation request.
   - Acceptance: commit exists on origin; Actions result or concrete blocker reported.
   - Primary evidence: git commit SHA, remote SHA and workflow run.
   - Status: verified
-  - Evidence: reconnect correction e2f61d788e43b903140da468796397d6affbf832 pushed to origin/master. Actions run https://github.com/0FL01/WarpPocket/actions/runs/39224555542 succeeded on Linux Python 3.12.15/3.13.16 and Windows Python 3.13.16. Final documentation-only checkpoint does not change tested code/workflow.
+  - Evidence: reconnect fix e2f61d78 + Actions run 39224555542 (Linux Python 3.12.15/3.13.16, Windows Python 3.13.16). The reserved-support change set is pushed in the current checkpoint with its own Actions verification.
 
 ### Constraints
-- No GUI before R1 network gate. Stop at confirmed registration/transport incompatibility rather than conceal it.
-- Separate persistent primary/probe identities; sequential trials; at most two wireproxy processes.
+- No false connected status: success still requires warp=on/plus plus an independent HTTPS resource. GUI is now permitted because the R1 gate passed.
+- Separate persistent primary/probe identities; sequential trials; at most two wireproxy processes; no further WARP registrations (both identities already exist).
 - Explicit TLS-verified HTTPS via socks5h; no direct/DNS fallback; loopback listeners only.
 - Private profiles/accounts/runtime files; no secrets in Git, cache, logs or CI artifacts.
 - Windows Job Objects assigned at process creation; no unmanaged fallback. No admin/drivers/system routing changes.
-- User explicitly accepted Cloudflare terms and authorized up to two registrations on 2026-10-18, correcting an earlier import-only answer.
-- On 2026-10-19 the user explicitly authorized direct SSH testing as root on Proxmox host 192.168.1.10, including WARP registration, and required host cleanup. Use one private temporary workspace and isolated venv; do not change Proxmox/VM/container configuration, packages, services, routes, DNS or firewall. Reuse the saved primary; the separately authorized probe is the second and final registration, for the gate or a causal old-versus-fresh-profile diagnostic. Preserve reusable secrets only in the local private data directory, never in Git; remove remote test processes/files afterwards.
+- User accepted Cloudflare terms and authorized both identities. Temporary authorized root testing on 192.168.1.10 is finished; host cleanup verified (zero workspaces/processes, port 25344 free); no Proxmox packages/services/routes/DNS/firewall changes.
 
 ### Non-goals
 - Future transport abstraction, MASQUE, parallel scanners, system VPN, tray/updater/installer/signing, adjacent projects, changes to docs/origin.md.
 
 ## Change Envelope
 - Target: this repository root, src/warppocket, tests, scripts, vendor metadata/licenses, dependency locks, README and .github/workflows.
-- Consumers: headless E2E first; later controller/Tk and Windows packaging.
-- Allowed: Python stdlib, requests[socks], pinned PyInstaller, verified upstream helpers; private runtime data in the user data directory required by the reviewed plan.
-- Remote R1 experiment: user-approved /root/warppocket-e2e-* workspace on 192.168.1.10, transferred source/verified helpers/locked wheels, private copies of test profiles, and an isolated venv only. All remote test artifacts must be removed after retrieval of results.
-- Forbidden: tracked helper binaries, private profiles/accounts, live registration in ordinary CI, source/configuration edits outside the repository or to adjacent projects.
+- Consumers: headless E2E (done); controller/Tk and Windows packaging next.
+- Allowed: Python stdlib, requests[socks], pinned PyInstaller, pinned Go build of patched wireproxy, verified wgcf; private runtime data in the user data directory.
+- Forbidden: tracked helper binaries, private profiles/accounts, live registration in ordinary CI, edits outside the repository.
 
 ## Current Checkpoint
-- Closes: R4 verified; R1/R2/R3 remain blocked after the newly authorized network experiment.
-- Smallest unlock: a demonstrably working compatible profile/endpoint or WARP network path is needed. Do not create further identities or repeat unchanged failed trials; the second identity, service-enable state, timeouts, DNS/MTU snapshots, older helper and independent client did not unlock the gate.
-- Expected evidence after unlock: WARP HTTPS plus independent resource, endpoint switch, profile reuse and primary/probe continuity, with owned-process/port cleanup.
-- Stop condition reached: tested WARP data path does not deliver acceptance HTTPS independently of the application healthcheck. Exact provider/service cause is unknown; no production workaround is justified. Do not start GUI or introduce another transport to hide the failure.
+- Closes: R2 (bounded sequential finder, cancellation-safe controller, minimal Tk GUI).
+- Smallest next action: implement endpoints.py + strategy_finder.py with tests; then controller.py (including ensure_reserved for primary/probe); then ui.py/__main__.py with tests.
+- Expected evidence: focused unit tests, headless GUI smoke on Linux, then packaged smoke and Windows CI.
+- Stop or replan if: a frozen outcome proves unavailable; then record exact evidence and the smallest unlock.
 
 ## Current State
-- Resolved: pinned dependencies/helpers, private storage and safe diagnostics, strict profiles/import, native process ownership, WireProxy backend, HTTPS health checks, opt-in E2E, offline tests and headless CI.
-- Last relevant evidence: local suite ran 53 tests (50 passed, 3 native-Windows skips). Current Actions run 39224555542 succeeded on all three jobs, including native Windows actual-helper reconnect, Job Objects, handles and DACL. Both upstream helper controls reproduce the WARP HTTPS failure; direct control confirms the primary acceptance resources themselves respond. Final host cleanup reports zero workspaces, zero owned processes and port 25344 closed.
-- Blocker: responsive endpoint supports handshake/TCP and occasional TCP DNS, but no completed acceptance HTTPS. Primary warp_enabled was explicitly enabled and verified true; unchanged regenerated configuration and original-profile remote retest still fail, including a 15-second diagnostic. The fresh, separately authorized probe was created through the working local API, enabled/verified true and tested remotely on 30 candidates with zero HTTPS successes. Thus an old/disabled identity alone does not explain the failure. Every remote workspace/process/capture was removed.
-- Next: no substantive code change is supported by the remaining external data-path failure. Resume R1 only when the smallest unlock above is available. R2/R3 still require a successful gate; Windows 10 acceptance remains outstanding.
+- Resolved: R1 verified (reserved root cause fixed; patched helper built from pinned sources; opt-in gate passed locally). Vendor pipeline builds the patched helper in CI.
+- Last relevant evidence: 64 offline tests pass (3 platform skips); gate-report-2026-10-19.json; helper build prints its SHA256.
+- Blocker: none for R1. Windows 10 manual acceptance still outstanding for R3.
+- Next: R2 implementation, then R3.
 
-### Remote closure evidence (2026-10-19)
+## Root cause and fix (2026-10-19)
+- Cloudflare WARP requires the 3-byte `reserved` client id inside WireGuard messages. `wgcf` does not emit it; upstream `wireproxy` has no support (issue #72).
+- Send-side support alone kept failing: capture showed the server mirrors the client id back in the reserved field, and upstream classification `binary.LittleEndian.Uint32(packet[:4])` then rejects responses ("unknown type").
+- Fix (mirrors sing-box ClientBind): send-side copy of `reserved` into outgoing headers plus receive-side clearing of bytes 1..3 before classification, in `conn/bind_std.go` and `conn/bind_windows.go` of pinned wireguard-go v0.0.0-20250521234502-f333402bd9cb.
+- Control: sing-box 1.14.3 with `peers.reserved` passed trace/gstatic/example/socks5h on the same profile/endpoint while wireproxy failed; after the receive-side fix the patched wireproxy passed both on Proxmox and locally.
+- Production path: `scripts/build_wireproxy.py` builds the patched helper from pinned wireproxy 1.1.3 sources and prints its SHA256; CI does this per platform. sing-box was rejected for production (GPL-3.0, size) but remains the reference implementation for this mechanism.
 
-- Proxmox source profile reused unchanged; separate probe registered through the reachable local API after the remote registration TLS failure. Both identities were enabled and checked with structured API GETs. No key/license replacement or third identity.
-- API warp_enabled=false was a hypothesis, not the root-cause finding: PATCH/verification true and regeneration with zero field differences did not restore HTTPS. No speculative activation API or Go SDK was added to the application.
-- Pinned 1.1.3 and SHA256-verified upstream 1.0.9 were tested sequentially with the same IPv4-only snapshot and endpoint 188.114.96.1:4500. Independent curl verified TLS to literal 1.1.1.1 in about 0.22s but got no HTTP response in 35s; domain requests failed SOCKS resolution after about 10s. Neither canonical healthcheck passed. The older binary is not shipped.
-- A direct, explicitly non-acceptance network control returned Cloudflare 200/warp=off and Google 204 in under a second; Apple timed out. It was never used as application fallback or connected-status evidence. IPv6 bootstrap UDP connect returned ENETUNREACH (101), so testing it would require forbidden host network changes.
-- Linux preflight TIME_WAIT false-positive was separately reproduced, fixed at its backend owner and covered by actual-helper immediate reconnect plus a live foreign listener test. It did not fix the WARP data path.
-- A final local retry after the enabled-account changes, adding the responsive remote endpoint and adjacent 4500 endpoints, still failed nine candidates with health_timeout and cleanup_verified:
-  `.venv/bin/python scripts/e2e_network.py --data-dir /home/stfu/.local/share/warppocket-e2e --endpoint 188.114.96.1:4500 --endpoint 188.114.97.1:4500 --endpoint 188.114.98.1:4500 --report /home/stfu/.local/share/warppocket-e2e/local-after-enable-2026-10-19.json`
-- Safe reports remain only in the local private data directory: remote-fresh-probe-2026-10-19.json, remote-helper-control-2026-10-19.json, remote-old-helper-control-2026-10-19.json, primary-warp-enable-2026-10-19.json, probe-creation-2026-10-19.json and final-proxmox-cleanup-2026-10-19.json. Account/profile files are not diagnostic logs and must never be printed or committed.
-- Final cleanup: remaining_remote_workspaces=0; remaining_remote_owned_processes=0; port_25344_closed=true. All remote venvs/helpers/profile copies/captures/traces removed. Local disposable SDK/control tools and staging removed; reusable primary/probe profiles retained only locally. No Proxmox packages/services/routes/DNS/firewall/VM/container configuration changed.
+## R1 gate evidence (2026-10-19)
 
-### Failed network checkpoint (2026-10-18)
+Command:
+`.venv/bin/python scripts/e2e_network.py --data-dir /home/stfu/.local/share/warppocket-e2e --report .../gate-report-2026-10-19.json --endpoint 188.114.96.1:4500 --endpoint 188.114.97.1:4500 --endpoint 188.114.98.1:4500 --endpoint 188.114.99.1:4500 --endpoint 162.159.192.1:2408 --endpoint 162.159.193.1:2408 --endpoint 162.159.195.1:2408`
 
-The primary was created by the explicitly authorized initial command:
+Results: passed=true; primary_verified 188.114.96.1:4500 417.19 ms; first_process_stopped; second endpoint 188.114.97.1:4500 327.0 ms; profile_reused_without_registration pid 1340599; probe_profile_ready; probe_verified 188.114.96.1:4500; primary_preserved (pid/port/profile unchanged); cleanup_verified; primary_requests=6; probe_attempts=2.
 
-```sh
-.venv/bin/python scripts/e2e_network.py --data-dir /home/stfu/.local/share/warppocket-e2e --accept-tos --accept-probe-tos --report /home/stfu/.local/share/warppocket-e2e/last-report.json
-```
-
-The subsequent expanded trial reused that profile, without a new registration:
-
-```sh
-set --
-for endpoint in \
-  8.6.112.1:2408 8.34.70.1:2408 8.34.146.1:2408 8.35.211.1:2408 \
-  8.39.125.1:2408 8.39.204.1:2408 8.39.214.1:2408 8.47.69.1:2408 \
-  188.114.97.1:2408 188.114.98.1:2408 188.114.99.1:2408 \
-  162.159.192.2:2408 162.159.193.2:2408 162.159.195.2:2408 \
-  162.159.192.1:4500 162.159.193.1:500 162.159.193.1:4500 \
-  162.159.195.1:500 162.159.195.1:4500 162.159.192.1:1701 \
-  162.159.193.1:3476 162.159.195.1:854 188.114.96.1:500 188.114.99.1:4500
-do
-  set -- "$@" --endpoint "$endpoint"
-done
-.venv/bin/python scripts/e2e_network.py --data-dir /home/stfu/.local/share/warppocket-e2e --report /home/stfu/.local/share/warppocket-e2e/last-report.json "$@"
-```
-
-Result: exit 1, `no_working_endpoint`, 30 `candidate_failed/health_timeout` events, `cleanup_verified`, zero primary HTTPS successes and zero probe attempts. The private report and reusable primary profile remain only in the external data directory, not Git. Configuration validation and a no-DNS TCP CONNECT diagnostic excluded invalid helper syntax and a purely hostname-resolution failure; neither is connectivity acceptance evidence. Further endpoint/profile creation loops are not justified by this result.
+Operational notes: `engage.cloudflareclient.com:2408` consistently times out in the tested networks; working candidates were in 188.114.9x.1:4500. Cache now holds last_good=188.114.97.1:4500. The finder must weigh these ranges highly. Safe reports stay only in the local private data directory; profiles are never committed or printed.
 
 ## Material Decisions
 - 2026-10-18: source compatible with Python >=3.12; Windows runtime pinned to 3.13.16 because maintained 3.12 releases have no official Windows installer.
 - 2026-10-18: origin is the user-specified SSH remote; no nested WarpPocket directory.
-- 2026-10-19: user authorized direct, careful WARP testing on 192.168.1.10 with mandatory cleanup. Read-only preflight confirmed Python 3.13.5, venv/SSL, sufficient disk and no listener on 25344. No system package or network changes are needed.
-- 2026-10-19: because the existing identity failed on two networks, advance the already authorized probe registration only for a fresh-identity comparison if the longer-timeout diagnostic still fails. Do not create any further identity or replace primary. Narrow packet capture is limited to the owned helper's UDP socket and a selected WARP endpoint; retain no capture on the host after cleanup.
-- 2026-10-19: temporary structured API diagnostic uses the pinned wgcf v2.3.1 SDK in approved local temporary storage only, never an application dependency. API GET proves warp_enabled=false; the author's archived Python client explicitly PATCHes this field true after registration. Test only that intended WARP-enabling operation on the same identity under the user's existing consent, verify response, and do not claim it fixes transport until HTTPS passes.
+- 2026-10-19: reserved support is achieved by building patched wireproxy from pinned sources rather than replacing the transport or shipping a forked module (the fork lacks tun/netstack).
+- 2026-10-19: imports accept `Reserved`; `ensure_reserved` fills it via the Cloudflare API when an account exists.
+- 2026-10-19: remote Proxmox testing was temporary; all remote artifacts removed and configuration untouched.
 
 ## Checkpoint History
-- 2026-10-18: contract frozen before implementation.
-- 2026-10-18: R1 headless code and offline tests implemented; real registration succeeded, but bounded network trials failed. GUI work stopped as required. R4 remains actionable through commit/push and native CI.
-- 2026-10-18: R4 verified by SSH push and successful Actions run 39165431267. Initial Windows run exposed a test assuming a context-suppression flag even when no exception context exists; corrected it to check that the full rendered exception contains no secret. Production process code unchanged. All native Windows ownership/privacy checks passed. Overall objective remains blocked on real network data traffic.
-- 2026-10-19: R1 reopened because the user provided and authorized a different network/host; remote execution is limited to an isolated removable test workspace.
-- 2026-10-19: remote Debian lacks ensurepip; isolated venv bootstrapped from transferred pip code/hashed wheels without system installation. Remote gate reused primary, failed six endpoints and verified cleanup. Both temporary workspaces were removed; no probe registration occurred.
-- 2026-10-19: causal capture (owned socket/endpoint only) found no UDP replies on 162.159.192.1:2408, but handshake and TCP data on 188.114.96.1:4500. Longer timeout did not complete domain HTTPS. Probe registration failed without a persisted account; private diagnostic saved locally. Capture/workspace/processes removed. Next checkpoint splits tunneled DNS and TLS instead of declaring all transport unavailable.
-- 2026-10-19: TCP DNS to 8.8.8.8 returns valid A answers through WARP, while domain and numeric HTTPS still fail; IPv4-only/other resolver/MTU1200 did not fix it. API read via exact SDK succeeded locally and exposed warp_enabled=false with active device. Next experiment enables that flag, not another blind endpoint/registration loop. Source/test code remains unchanged.
-- 2026-10-19: primary PATCH/verification GET confirmed warp_enabled=true, but HTTPS still failed with original profile and longer timeout; fresh generate produced no changed fields. Standard Python requests API GET also succeeds locally. Probe registration succeeded locally after the remote TLS failure, with distinct identity; its false WARP flag was enabled and verified true. Remote bounded 30-candidate probe trial still produced zero successes, cleanup confirmed. No further identities will be created; next control varies the helper implementation, not random endpoints.
-- 2026-10-19: independent curl with helper 1.1.3 verified TLS to literal 1.1.1.1 but received no HTTP response in 35s; domain DNS failed. Old helper control did not start via backend, although native --version/configtest exit 0 and foreground stays running. A local minimal reproduction proves backend incorrectly reports a closed TIME_WAIT socket as port_busy; SO_REUSEADDR binding succeeds. Fix the owning backend preflight and explicit reconnect test before interpreting more network failures.
-- 2026-10-19: reconnect fix e2f61d7 passed 53-test local suite and all native CI jobs (run 39224555542). After the fix the old-helper data control starts and reproduces the same HTTPS failure as 1.1.3, excluding that recent-helper regression hypothesis. Direct resource control succeeds; IPv6 has no route; changed-account local retry also fails. All host/local disposable tooling cleaned, both profiles retained privately. R1/R2/R3 blocked, R4 verified; no MVP completion claimed.
+- 2026-10-18: contract frozen; headless implementation and offline tests; first bounded network trials failed.
+- 2026-10-18: R4 verified (push + Actions 39165431267); Windows test correction checked rendered redaction instead of a flag.
+- 2026-10-19: user authorized remote testing; two networks reproduced the failure; API flags, DNS/MTU variants, old helper and fresh probe excluded as causes; remote cleanup verified.
+- 2026-10-19: root cause identified (reserved) and confirmed with a sing-box control; receive-side fix ported; production build pipeline and CI Go build added.
+- 2026-10-19: opt-in gate passed locally; reserved-support change set committed/pushed with Actions verification.
 
 ## Completion
-- Resolved outcomes: R4 verified; R1/R2/R3 blocked. No waiver or MVP completion claimed.
-- Commands/artifacts: local 53-test suite, focused backend tests, real local/remote gates and causal controls, code commit e2f61d7, successful Actions 39224555542 and final cleanup report above.
-- Constraint/scope check: source delta is only the reproduced Linux preflight correction and regression test; docs updated; origin.md preserved. No helpers/secrets committed, no new application dependency/transport/GUI, no system network changes. Authorized WARP enable flags intentionally remain true; reusable accounts/profiles retained privately.
-- Final status: blocked on a working WARP data path in the available networks with these compatible profiles/transport. Exact external cause is not asserted. Successful WARP HTTPS, background continuity, GUI, EXE and Windows 10 acceptance remain unverified/unimplemented as applicable.
+- Resolved outcomes: R1 verified; R4 verified. R2/R3 pending. Windows 10 acceptance outstanding.
+- Final status: active, continuing with R2.
