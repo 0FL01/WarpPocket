@@ -83,7 +83,7 @@ func (p *nativeProbe) frame(gtx layout.Context, v *View) {
 		}
 	default:
 	}
-	if p.ctx.Err() != nil && !p.ready() {
+	if p.ctx.Err() != nil && p.err == nil && !p.ready() {
 		p.err = model.E("native_ui_timeout", "Истекло время проверки нативного интерфейса.")
 	}
 }
