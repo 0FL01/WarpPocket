@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build wireproxy from pinned sources with Cloudflare WARP reserved support.
+"""Build pinned wireproxy with WARP reserved support and ordered tunneled DNS.
 
 Usage: python scripts/build_wireproxy.py --platform linux-amd64
        python scripts/build_wireproxy.py --platform windows-amd64
@@ -11,7 +11,9 @@ archive that is downloaded over verified TLS and checked against a pinned
 SHA-256 before anything is patched. wireproxy learns a Reserved key for its
 [Peer] sections, and a patched copy of the pinned golang.zx2c4.com/wireguard
 module injects those bytes for the configured endpoint and masks the mirrored
-bytes in responses. Failures never leave a partial vendor binary behind.
+bytes in responses. A lookup-wide DNS policy bounds failover and cancellation;
+its native Go tests run before cross-compilation. Failures never leave a partial
+vendor binary behind.
 """
 
 from __future__ import annotations
@@ -45,13 +47,14 @@ TARGETS = {
 WIREPROXY_REPOSITORY = "windtf/wireproxy"
 WIREGUARD_MODULE = "golang.zx2c4.com/wireguard"
 WIREGUARD_REPLACE = "replace golang.zx2c4.com/wireguard => ./wireguard-go"
-SUPPORTED_PATCH = "reserved-support"
+SUPPORTED_PATCH = "reserved-support+ordered-dns"
 MAX_SOURCE_BYTES = 20 * 1024 * 1024
 CHUNK_BYTES = 64 * 1024
 SOCKET_TIMEOUT = 120.0
 MODULE_TIMEOUT = 600
 TIDY_TIMEOUT = 600
 BUILD_TIMEOUT = 900
+TEST_TIMEOUT = 300
 STDERR_TAIL_CHARS = 1500
 
 
@@ -295,6 +298,138 @@ def patch_wireproxy(src: Path) -> None:
     wireguard = replace_once(wireguard, WIREGUARD_BIND_OLD, WIREGUARD_BIND_NEW,
                              "wireguard.go bind")
     _write_text(src / "wireguard.go", wireguard)
+
+
+# --- pinned netstack anchors; DNS parsing and tunnel dialers remain upstream ---
+
+DNS_LOOKUP_PREFIX = '''func (tnet *Net) LookupContextHost(ctx context.Context, host string) ([]string, error) {
+	if host == "" || (!tnet.hasV6 && !tnet.hasV4) {
+		return nil, &net.DNSError{Err: errNoSuchHost.Error(), Name: host, IsNotFound: true}
+	}
+	zlen := len(host)
+	if strings.IndexByte(host, ':') != -1 {
+		if zidx := strings.LastIndexByte(host, '%'); zidx != -1 {
+			zlen = zidx
+		}
+	}
+	if ip, err := netip.ParseAddr(host[:zlen]); err == nil {
+		return []string{ip.String()}, nil
+	}
+
+	if !isDomainName(host) {
+		return nil, &net.DNSError{Err: errNoSuchHost.Error(), Name: host, IsNotFound: true}
+	}
+'''
+
+DNS_LOOKUP_PREFIX_NEW = '''func (tnet *Net) lookupContextHostAtServer(ctx context.Context, host string, exchange warpDNSExchange) ([]string, error) {
+'''
+
+DNS_EXCHANGE_LOOP = '''	for _, useUDP := range []bool{true, false} {
+		ctx, cancel := context.WithDeadline(ctx, time.Now().Add(timeout))
+		defer cancel()
+
+'''
+
+DNS_EXCHANGE_LOOP_NEW = '''	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for _, useUDP := range []bool{true, false} {
+		if ctx.Err() != nil {
+			return dnsmessage.Parser{}, dnsmessage.Header{}, ctx.Err()
+		}
+
+'''
+
+DNS_CONNECTION_DEADLINE = '''		if d, ok := ctx.Deadline(); ok && !d.IsZero() {
+			err := c.SetDeadline(d)
+			if err != nil {
+				return dnsmessage.Parser{}, dnsmessage.Header{}, err
+			}
+		}
+'''
+
+DNS_CONNECTION_DEADLINE_NEW = '''		stop := context.AfterFunc(ctx, func() { c.Close() })
+		if d, ok := ctx.Deadline(); ok && !d.IsZero() {
+			err := c.SetDeadline(d)
+			if err != nil {
+				stop()
+				c.Close()
+				return dnsmessage.Parser{}, dnsmessage.Header{}, err
+			}
+		}
+'''
+
+DNS_TRY_EXCHANGE = '''		for _, server := range tnet.dnsServers {
+			p, h, err := tnet.exchange(ctx, server, q, time.Second*5)
+'''
+
+DNS_TRY_EXCHANGE_NEW = '''		for _, server := range tnet.dnsServers {
+			if ctx.Err() != nil {
+				return dnsmessage.Parser{}, "", warpDNSContextError(ctx, name)
+			}
+			p, h, err := exchange(ctx, server, q, warpDNSStageTimeout)
+			if ctx.Err() != nil {
+				return dnsmessage.Parser{}, "", warpDNSContextError(ctx, name)
+			}
+'''
+
+DNS_RESULT_ERROR = '''		if result.error != nil {
+			if lastErr == nil {
+				lastErr = result.error
+			}
+			continue
+		}
+'''
+
+DNS_RESULT_ERROR_NEW = '''		if result.error != nil {
+			var dnsErr *net.DNSError
+			if errors.As(result.error, &dnsErr) && dnsErr.IsNotFound {
+				negativeErr = result.error
+			}
+			if lastErr == nil {
+				lastErr = result.error
+			}
+			continue
+		}
+'''
+
+
+def patch_wireguard_dns(destination: Path) -> None:
+    """Coordinate A/AAAA per resolver; bound and cancel the original DNS I/O."""
+    path = destination / "tun" / "netstack" / "tun.go"
+    text = _read_text(path)
+    replacements = [
+        (DNS_LOOKUP_PREFIX, DNS_LOOKUP_PREFIX_NEW, "lookup stage entry"),
+        ('\t"strings"\n', "", "relocated host-validation import"),
+        ("qtype dnsmessage.Type) (dnsmessage.Parser, string, error) {",
+         "qtype dnsmessage.Type, exchange warpDNSExchange) (dnsmessage.Parser, string, error) {",
+         "tryOneName exchange dependency"),
+        (DNS_TRY_EXCHANGE, DNS_TRY_EXCHANGE_NEW, "per-stage retries"),
+        ('tnet.tryOneName(ctx, host+".", dnsmessage.TypeA)',
+         'tnet.tryOneName(ctx, host+".", dnsmessage.TypeA, exchange)', "A exchange"),
+        ('tnet.tryOneName(ctx, host+".", dnsmessage.TypeAAAA)',
+         'tnet.tryOneName(ctx, host+".", dnsmessage.TypeAAAA, exchange)', "AAAA exchange"),
+        ("lane := make(chan result, lanes)\n\tvar lastErr error\n",
+         "lane := make(chan result, lanes)\n\tvar lastErr error\n\tvar negativeErr error\n",
+         "negative response state"),
+        (DNS_RESULT_ERROR, DNS_RESULT_ERROR_NEW, "negative response precedence"),
+        ("\tif len(addrs) == 0 && lastErr != nil {\n\t\treturn nil, lastErr\n\t}\n",
+         "\tif len(addrs) == 0 {\n\t\tif negativeErr != nil {\n\t\t\treturn nil, negativeErr\n\t\t}\n"
+         "\t\tif lastErr != nil {\n\t\t\treturn nil, lastErr\n\t\t}\n\t}\n",
+         "negative response return"),
+        (DNS_EXCHANGE_LOOP, DNS_EXCHANGE_LOOP_NEW, "shared UDP/TCP deadline"),
+        (DNS_CONNECTION_DEADLINE, DNS_CONNECTION_DEADLINE_NEW, "cancel DNS connection"),
+        ("\t\tc.Close()\n\t\tif err != nil {\n\t\t\tif err == context.Canceled {",
+         "\t\tstop()\n\t\tc.Close()\n\t\tif err != nil {\n"
+         "\t\t\tif ctx.Err() != nil {\n\t\t\t\terr = ctx.Err()\n\t\t\t}\n"
+         "\t\t\tif err == context.Canceled {", "DNS I/O cleanup"),
+    ]
+    for old, new, label in replacements:
+        text = replace_once(text, old, new, f"tun/netstack {label}")
+    payload = _read_text(ROOT / "scripts" / "wireproxy_dns.go")
+    tests = _read_text(ROOT / "tests" / "wireproxy_dns_test.go")
+    _write_text(path, text)
+    _write_text(path.with_name("warppocket_dns.go"), payload)
+    _write_text(path.with_name("warppocket_dns_test.go"), tests)
 
 
 # --- known golang.zx2c4.com/wireguard conn anchors (pinned pseudo-version) ---
@@ -632,6 +767,21 @@ def build_target(src: Path, platform: str, out_root: Path) -> Path:
     return output
 
 
+def test_dns_policy(src: Path) -> None:
+    """Run the patched nested module's tests natively, even for a cross build."""
+    environment = {**os.environ, "GOFLAGS": "-mod=mod", "CGO_ENABLED": "0"}
+    result = run_go(["go", "env", "GOHOSTOS", "GOHOSTARCH"], src, environment, 30, "go env host")
+    host = result.stdout.split()
+    if len(host) != 2:
+        raise BuildError("go env did not report the native host target")
+    environment.update({"GOOS": host[0], "GOARCH": host[1]})
+    result = run_go(
+        ["go", "test", "./tun/netstack", "-run", "^TestWarpPocketDNS", "-count=1", "-v"],
+        src / "wireguard-go", environment, TEST_TIMEOUT, "native DNS tests",
+    )
+    print(result.stdout, file=sys.stderr, end="")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", choices=(*PLATFORMS, ALL_TARGETS), default=ALL_TARGETS)
@@ -651,7 +801,9 @@ def main(argv: list[str] | None = None) -> int:
         module = download_wireguard_module(source, pins)
         copy_wireguard_module(module, source / "wireguard-go")
         patch_wireguard_conn(source / "wireguard-go")
+        patch_wireguard_dns(source / "wireguard-go")
         patch_go_mod(source)
+        test_dns_policy(source)
         for platform in platforms:
             built.append(build_target(source, platform, out_root))
     except (BuildError, OSError) as exc:

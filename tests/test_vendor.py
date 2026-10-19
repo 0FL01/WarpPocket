@@ -344,7 +344,7 @@ class WireproxyBuildTests(unittest.TestCase):
     def test_checked_in_pins_are_valid_and_pinned(self):
         pins = builder.load_pins()
         self.assertEqual(pins["schema_version"], 1)
-        self.assertEqual(pins["patch"], "reserved-support")
+        self.assertEqual(pins["patch"], "reserved-support+ordered-dns")
         self.assertEqual(pins["wireproxy"]["version"], "1.1.3")
         self.assertEqual(pins["wireproxy"]["url"],
                          "https://github.com/windtf/wireproxy/archive/refs/tags/v1.1.3.tar.gz")
@@ -385,6 +385,55 @@ class WireproxyBuildTests(unittest.TestCase):
                          ("windows", "amd64", "wireproxy.exe"))
         with self.assertRaises(builder.BuildError):
             builder.target_for("darwin-arm64")
+
+    def test_dns_patch_rejects_missing_duplicate_or_incomplete_anchors_without_writes(self):
+        for text in ("", builder.DNS_LOOKUP_PREFIX * 2, builder.DNS_LOOKUP_PREFIX):
+            with self.subTest(text_length=len(text)), \
+                    mock.patch.object(builder, "_read_text", return_value=text), \
+                    mock.patch.object(builder, "_write_text") as write:
+                with self.assertRaises(builder.BuildError):
+                    builder.patch_wireguard_dns(self.root)
+                write.assert_not_called()
+
+    def test_dns_tests_run_in_nested_module_with_native_not_cross_target(self):
+        host = mock.Mock(stdout="linux\namd64\n")
+        tested = mock.Mock(stdout="PASS\n")
+        with mock.patch.dict(builder.os.environ, {"GOOS": "windows", "GOARCH": "arm64"}), \
+                mock.patch.object(builder, "run_go", side_effect=[host, tested]) as run, \
+                mock.patch("sys.stderr", new_callable=io.StringIO):
+            builder.test_dns_policy(self.root)
+        self.assertEqual(run.call_count, 2)
+        native = run.call_args_list[1].args
+        self.assertEqual(native[0], ["go", "test", "./tun/netstack", "-run", "^TestWarpPocketDNS", "-count=1", "-v"])
+        self.assertEqual(native[1], self.root / "wireguard-go")
+        self.assertEqual((native[2]["GOOS"], native[2]["GOARCH"]), ("linux", "amd64"))
+        self.assertEqual(native[2]["CGO_ENABLED"], "0")
+
+    def test_failed_native_dns_gate_prevents_cross_build_and_publication(self):
+        replacements = {
+            "load_pins": mock.Mock(return_value=builder.load_pins()),
+            "download_source": mock.Mock(return_value=b"verified-source"),
+            "extract_source": mock.Mock(return_value=self.root),
+            "patch_wireproxy": mock.Mock(),
+            "download_wireguard_module": mock.Mock(return_value=self.root / "cache"),
+            "copy_wireguard_module": mock.Mock(),
+            "patch_wireguard_conn": mock.Mock(),
+            "patch_wireguard_dns": mock.Mock(),
+            "patch_go_mod": mock.Mock(),
+            "test_dns_policy": mock.Mock(side_effect=builder.BuildError("native DNS gate failed")),
+            "build_target": mock.Mock(),
+            "remove_tree": mock.Mock(),
+        }
+        with mock.patch.multiple(builder, **replacements), \
+                mock.patch.object(builder.shutil, "which", return_value="go"), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as stderr, \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            result = builder.main(["--platform", "windows-amd64", "--out-root", str(self.root)])
+        self.assertEqual(result, 1)
+        self.assertIn("native DNS gate failed", stderr.getvalue())
+        self.assertEqual(stdout.getvalue(), "")
+        replacements["build_target"].assert_not_called()
+        replacements["remove_tree"].assert_called_once_with(self.root)
 
     def test_source_extraction_accepts_only_safe_regular_members(self):
         good = make_archive([

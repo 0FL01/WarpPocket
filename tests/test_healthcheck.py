@@ -28,11 +28,12 @@ class HealthcheckTests(unittest.TestCase):
         with patch("warppocket.healthcheck.requests.Session", return_value=session):
             self.assertGreaterEqual(check_proxy(25344), 0)
         self.assertFalse(session.trust_env)
-        self.assertEqual(session.proxies["https"], "socks5h://127.0.0.1:25344")
+        self.assertEqual(session.proxies, {"http": "socks5h://127.0.0.1:25344",
+                                           "https": "socks5h://127.0.0.1:25344"})
         for call in session.get.call_args_list:
             self.assertFalse(call.kwargs["allow_redirects"])
             self.assertTrue(call.kwargs["verify"])
-            self.assertEqual(call.kwargs["timeout"], (3, 5))
+            self.assertEqual(call.kwargs["timeout"], (5, 5))
         self.assertEqual(session.mount.call_args.args[1].max_retries.total, 0)
         trace.__exit__.assert_called_once()
         independent.__exit__.assert_called_once()
@@ -68,6 +69,48 @@ class HealthcheckTests(unittest.TestCase):
                     check_proxy(1234)
             self.assertEqual(session.get.call_count, 1)
             self.assertTrue(session.proxies["https"].startswith("socks5h://127.0.0.1:"))
+
+    def test_wall_deadline_bounds_streaming_responses(self):
+        trace = self.response(200, b"")
+        trace.iter_content.return_value = [b"warp=", b"on\n"]
+        session = self.session([trace])
+        with patch("warppocket.healthcheck.requests.Session", return_value=session), \
+                patch("warppocket.healthcheck.time.monotonic", side_effect=[100, 100, 100, 129, 130]):
+            with self.assertRaises(AppError) as caught:
+                check_proxy(1234)
+        self.assertEqual(caught.exception.code, "health_timeout")
+        session.get.assert_called_once()
+        trace.__exit__.assert_called_once()
+        session.__exit__.assert_called_once()
+
+    def test_wall_deadline_is_shared_by_trace_independent_and_fallback(self):
+        session = self.session([self.response(200, b"warp=on\n"), requests.Timeout()])
+        with patch("warppocket.healthcheck.requests.Session", return_value=session), \
+                patch("warppocket.healthcheck.time.monotonic", side_effect=[100, 100, 100, 129, 129, 129, 130]):
+            with self.assertRaises(AppError) as caught:
+                check_proxy(1234)
+        self.assertEqual(caught.exception.code, "health_timeout")
+        self.assertEqual([call.args[0] for call in session.get.call_args_list], [TRACE_URL, INDEPENDENT_URL])
+        session.__exit__.assert_called_once()
+
+    def test_cancellation_during_stream_stops_followup_checks(self):
+        cancelled = threading.Event()
+        trace = self.response(200, b"")
+
+        def chunks(chunk_size):
+            yield b"warp="
+            cancelled.set()
+            yield b"on\n"
+
+        trace.iter_content.side_effect = chunks
+        session = self.session([trace])
+        with patch("warppocket.healthcheck.requests.Session", return_value=session):
+            with self.assertRaises(AppError) as caught:
+                check_proxy(1234, cancel=cancelled)
+        self.assertEqual(caught.exception.code, "cancelled")
+        session.get.assert_called_once()
+        trace.__exit__.assert_called_once()
+        session.__exit__.assert_called_once()
 
     def test_oversized_response_and_cancellation(self):
         session = self.session([self.response(200, b"x" * 16385)])

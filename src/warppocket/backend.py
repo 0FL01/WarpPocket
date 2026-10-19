@@ -6,13 +6,15 @@ import sys
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from warppocket.models import AppError, Endpoint, Profile
 from warppocket.profiles import render_profile
 from warppocket.process_manager import ProcessCancelled
 from warppocket.storage import AppPaths, atomic_write
+
+RUNTIME_DNS = ("83.220.169.155", "212.109.195.93", "9.9.9.9")
 
 
 def bundled_root() -> Path:
@@ -66,7 +68,8 @@ class WireProxyBackend:
                     raise AppError("port_busy", "Порт SOCKS5 занят другим приложением; чужой процесс не будет завершён.") from None
                 chosen_port = reservation.getsockname()[1]
             config = self.paths.run / f"{role}-{uuid.uuid4().hex}.conf"
-            content = render_profile(profile, endpoint) + f"\n[Socks5]\nBindAddress = 127.0.0.1:{chosen_port}\n\n[Resolve]\nResolveStrategy = ipv4\n"
+            runtime_profile = replace(profile, dns=RUNTIME_DNS)
+            content = render_profile(runtime_profile, endpoint) + f"\n[Socks5]\nBindAddress = 127.0.0.1:{chosen_port}\n\n[Resolve]\nResolveStrategy = ipv4\n"
             atomic_write(config, content.encode("utf-8"))
             process = None
             try:
