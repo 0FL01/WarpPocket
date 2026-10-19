@@ -1,0 +1,5 @@
+// Source artwork: WarpPocket-Crayon-Design/Crayon Connection Pocket Icon.png
+// From this directory, regenerate the checked-in Windows resource with:
+// x86_64-w64-mingw32-windres -i resources.rc -o resources_windows_amd64.syso -O coff
+// Gio loads icon group 1 for the window/title bar; Explorer uses it for the EXE.
+1 ICON "icon.ico"
