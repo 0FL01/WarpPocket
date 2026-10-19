@@ -10,7 +10,7 @@
 
 Gate прошёл: primary на `188.114.96.1:4500` (417 мс), после полной остановки другой endpoint `188.114.97.1:4500` (327 мс), повторное использование сохранённого профиля без регистрации, отдельный probe при непрерывных запросах primary (6 запросов, 0 сбоев) без изменений PID/порта/профиля, cleanup подтверждён. `engage.cloudflareclient.com:2408` в тестовых сетях стабильно таймаутит; рабочие кандидаты — `188.114.9x.1:4500`.
 
-GitHub Actions собирает патченный helper (Go 1.26) на Linux и Windows и прогоняет 154 теста с платформенными skips; на Windows выполняются настоящие Job Object owner-crash/handle tests, DACL test и offline smoke helper'а. Проверенная Windows-сборка: [run 39241371383](https://github.com/0FL01/WarpPocket/actions/runs/39241371383), коммит `4e8885d`: все четыре jobs зелёные, включая packaging и проверку штатного закрытия и аварийного завершения внутреннего GUI-процесса. CI на Windows Server 2022 не заменяет приёмку на Windows 10.
+GitHub Actions собирает патченный helper (Go 1.26) на Linux и Windows и прогоняет полный набор тестов с платформенными skips; на Windows выполняются настоящие Job Object owner-crash/handle tests, DACL test и offline smoke helper'а. Проверенная Windows-сборка: [run 39241371383](https://github.com/0FL01/WarpPocket/actions/runs/39241371383), коммит `4e8885d`: все четыре jobs зелёные, включая packaging и проверку штатного закрытия и аварийного завершения внутреннего GUI-процесса. После успешных проверок push в `master` новый EXE автоматически публикуется в rolling-релиз. CI на Windows Server 2022 не заменяет приёмку на Windows 10.
 
 Не считать открытый SOCKS-порт доказательством подключения: проверка требует `warp=on/plus` и независимого HTTPS-ресурса. Это не системный VPN и не гарантия обхода DPI.
 
@@ -18,23 +18,11 @@ GitHub Actions собирает патченный helper (Go 1.26) на Linux �
 
 ### Готовый Windows EXE
 
-Скачайте проверенный артефакт [WarpPocket-windows-x64](https://github.com/0FL01/WarpPocket/actions/runs/39241371383/artifacts/12182205547) и распакуйте его. В нём находятся `WarpPocket.exe` и `WarpPocket.exe.sha256`. Для запуска нужны только сам EXE и обычная учётная запись Windows x64: устанавливать Python, Go, WireGuard или драйверы не нужно. Приложение не подписано; SmartScreen может показывать предупреждение об неизвестном издателе. Более новые сборки публикуются в [GitHub Actions](https://github.com/0FL01/WarpPocket/actions).
+**[Скачать WarpPocket.exe](https://github.com/0FL01/WarpPocket/releases/download/rolling/WarpPocket.exe)** — прямая ссылка на последний успешно опубликованный EXE. [Страница rolling-релиза](https://github.com/0FL01/WarpPocket/releases/tag/rolling).
 
-SHA256 именно этой проверенной сборки (29 392 538 байт):
+Для запуска нужны только сам EXE и обычная учётная запись Windows x64: устанавливать Python, Go, WireGuard или драйверы не нужно. Распаковка не требуется: в релизе прикреплён **только `WarpPocket.exe`**, без ZIP, checksum-файлов и smoke-отчётов. Приложение не подписано; SmartScreen может показывать предупреждение об неизвестном издателе.
 
-```text
-4c48304ec7e3161f4281bf6a0a1383a62ef8444ee3851a78a69c35b930909d2d
-```
-
-Опубликованный EXE скачан и сверён с файлом контрольной суммы и SHA256 из CI. Безопасные отчёты штатного закрытия и GUI-only crash-test доступны отдельно: [WarpPocket-packaged-smoke](https://github.com/0FL01/WarpPocket/actions/runs/39241371383/artifacts/12182111124).
-
-Проверка контрольной суммы в PowerShell:
-
-```powershell
-$expected = ((Get-Content .\WarpPocket.exe.sha256 -Raw).Trim() -split '\s+')[0]
-if ((Get-FileHash .\WarpPocket.exe -Algorithm SHA256).Hash -ne $expected) { throw 'SHA256 mismatch' }
-.\WarpPocket.exe
-```
+Каждый push в `master` сначала проходит Linux/Windows tests, сборку и packaged smoke. Только после их успеха job `Publish rolling EXE` обновляет тег `rolling`, описание и EXE в одном постоянном релизе. Pull request, push в другую ветку и ручной запуск workflow ничего не публикуют. Публикации выполняются последовательно; поздно завершившаяся старая сборка не откатывает более новую. Внутренние Actions-артефакты и безопасные smoke-отчёты остаются в CI, а не прикрепляются к релизу.
 
 ### Из исходников
 
