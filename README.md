@@ -4,13 +4,13 @@
 
 ## Текущее состояние
 
-Реализованы **headless-ядро и приложение**: приватные профили и кеш, безопасный импорт, управляемые процессы, backend wireproxy, реальные HTTPS-проверки, ограниченный последовательный поиск стратегий, контроллер состояния и Tkinter-интерфейс. Обязательный сетевой gate **пройден локально 2026-10-19**. Добавлены Windows onefile-сборка и проверка готового EXE в CI; приёмка на чистой Windows 10 ещё не выполнена. Текущее состояние и доказательства записаны в [execution contract](docs/goals/2026-10-18-warppocket-mvp.md); исходное предложение — [docs/origin.md](docs/origin.md).
+Реализованы **headless-ядро и приложение**: приватные профили и кеш, безопасный импорт, управляемые процессы, backend wireproxy, реальные HTTPS-проверки, ограниченный последовательный поиск стратегий, контроллер состояния и Tkinter-интерфейс. Обязательный сетевой gate **пройден локально 2026-10-19**. Windows onefile-сборка и проверка готового EXE **прошли CI**; приёмка на чистой Windows 10 ещё не выполнена. Текущее состояние и доказательства записаны в [execution contract](docs/goals/2026-10-18-warppocket-mvp.md); исходное предложение — [docs/origin.md](docs/origin.md).
 
 Причина прежних таймаутов: Cloudflare WARP требует 3 байта `reserved` (24-битный client id) в WireGuard-сообщениях; `wgcf` их не пишет, а upstream `wireproxy` не поддерживает. Патченная сборка helper'а (`scripts/build_wireproxy.py`) добавляет `reserved` в исходящие пакеты и очищает зеркалированное сервером поле во входящих; это подтверждено контрольным экспериментом с `sing-box` на том же профиле и endpoint.
 
 Gate прошёл: primary на `188.114.96.1:4500` (417 мс), после полной остановки другой endpoint `188.114.97.1:4500` (327 мс), повторное использование сохранённого профиля без регистрации, отдельный probe при непрерывных запросах primary (6 запросов, 0 сбоев) без изменений PID/порта/профиля, cleanup подтверждён. `engage.cloudflareclient.com:2408` в тестовых сетях стабильно таймаутит; рабочие кандидаты — `188.114.9x.1:4500`.
 
-GitHub Actions собирает патченный helper (Go 1.26) на Linux и Windows и прогоняет полный набор тестов с платформенными skips; на Windows выполняются настоящие Job Object owner-crash/handle tests, DACL test и offline smoke helper'а. Предыдущий проверенный прогон приложения: [run 39237908290](https://github.com/0FL01/WarpPocket/actions/runs/39237908290). Новый packaging-job собирает EXE и отдельно проверяет штатное закрытие и аварийное завершение внутреннего GUI-процесса. CI на Windows Server 2022 не заменяет приёмку на Windows 10.
+GitHub Actions собирает патченный helper (Go 1.26) на Linux и Windows и прогоняет 154 теста с платформенными skips; на Windows выполняются настоящие Job Object owner-crash/handle tests, DACL test и offline smoke helper'а. Проверенная Windows-сборка: [run 39241371383](https://github.com/0FL01/WarpPocket/actions/runs/39241371383), коммит `4e8885d`: все четыре jobs зелёные, включая packaging и проверку штатного закрытия и аварийного завершения внутреннего GUI-процесса. CI на Windows Server 2022 не заменяет приёмку на Windows 10.
 
 Не считать открытый SOCKS-порт доказательством подключения: проверка требует `warp=on/plus` и независимого HTTPS-ресурса. Это не системный VPN и не гарантия обхода DPI.
 
@@ -18,7 +18,15 @@ GitHub Actions собирает патченный helper (Go 1.26) на Linux �
 
 ### Готовый Windows EXE
 
-В успешном прогоне [GitHub Actions](https://github.com/0FL01/WarpPocket/actions) скачайте артефакт `WarpPocket-windows-x64` и распакуйте его. В нём должны быть `WarpPocket.exe` и `WarpPocket.exe.sha256`. Для запуска нужны только сам EXE и обычная учётная запись Windows x64: устанавливать Python, Go, WireGuard или драйверы не нужно. Приложение не подписано; SmartScreen может показывать предупреждение об неизвестном издателе.
+Скачайте проверенный артефакт [WarpPocket-windows-x64](https://github.com/0FL01/WarpPocket/actions/runs/39241371383/artifacts/12182205547) и распакуйте его. В нём находятся `WarpPocket.exe` и `WarpPocket.exe.sha256`. Для запуска нужны только сам EXE и обычная учётная запись Windows x64: устанавливать Python, Go, WireGuard или драйверы не нужно. Приложение не подписано; SmartScreen может показывать предупреждение об неизвестном издателе. Более новые сборки публикуются в [GitHub Actions](https://github.com/0FL01/WarpPocket/actions).
+
+SHA256 именно этой проверенной сборки (29 392 538 байт):
+
+```text
+4c48304ec7e3161f4281bf6a0a1383a62ef8444ee3851a78a69c35b930909d2d
+```
+
+Опубликованный EXE скачан и сверён с файлом контрольной суммы и SHA256 из CI. Безопасные отчёты штатного закрытия и GUI-only crash-test доступны отдельно: [WarpPocket-packaged-smoke](https://github.com/0FL01/WarpPocket/actions/runs/39241371383/artifacts/12182111124).
 
 Проверка контрольной суммы в PowerShell:
 

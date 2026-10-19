@@ -1,6 +1,6 @@
 # Goal: WarpPocket MVP
 
-Status: active
+Status: blocked
 Source: docs/origin.md; reviewed conversation plan; user request to implement, commit and push.
 Last updated: 2026-10-19
 
@@ -29,14 +29,14 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
   - Source: reviewed plan step 9 and done criteria.
   - Acceptance: Actions builds standalone EXE with the patched helper; offline smoke verifies resources and helper lifecycle; clean Windows 10 acceptance recorded separately.
   - Primary evidence: GitHub Actions and explicit Windows 10/VM test.
-  - Status: in_progress
-  - Evidence: native PyInstaller spec and Windows packaging workflow implemented; offline GUI/helper smoke passes locally. First run 39240731907 passed Linux but failed Windows on filesystem-vs-wall-clock timestamp precision and an early native wait timeout. Both causes were reproduced locally and fixed without weakening freshness/deadline checks; the next native run must confirm them before packaging. Clean Windows 10 acceptance remains unverified.
+  - Status: blocked
+  - Evidence: packaging and offline acceptance verified by Actions run 39241371383 at 4e8885dc074eb59dd9351218ff3629c8780f913d (all four jobs successful). Native Windows passed 154 tests (4 platform skips); onefile EXE passed real GUI/resources/SOCKS checks and graceful cleanup. GUI-only termination killed inner PID 812, not launcher 2828; helper 3708 exited and port 49546 closed before emergency cleanup. EXE artifact 12182205547 (29,392,538 bytes), safe JSON artifact 12182111124. Downloaded EXE SHA256 matches its checksum file and CI: 4c48304ec7e3161f4281bf6a0a1383a62ef8444ee3851a78a69c35b930909d2d. Only clean Windows 10 acceptance is unresolved; no such OS/VM is available through the authorized environment.
 - R4: Commit and push the verified deliverable to git@github.com:0FL01/WarpPocket.git and inspect Actions.
   - Source: latest user implementation request.
   - Acceptance: commit exists on origin; Actions result or concrete blocker reported.
   - Primary evidence: git commit SHA, remote SHA and workflow run.
   - Status: verified
-  - Evidence: reconnect fix e2f61d78 + Actions run 39224555542 (Linux Python 3.12.15/3.13.16, Windows Python 3.13.16). Reserved-support change set 19af8157 pushed; Actions run 39235875257 succeeded on all three jobs, including the native Windows job that builds the patched helper with Go 1.26 and passes 64 tests.
+  - Evidence: packaging commit c59f13d and native clock/deadline correction 4e8885d pushed to origin/master. Actions run 39241371383 succeeded on Linux Python 3.12.15/3.13.16, Windows Python 3.13.16 and the native Windows onefile packaging job; EXE/checksum and safe smoke artifacts inspected and downloaded.
 
 ### Constraints
 - No false connected status: success still requires warp=on/plus plus an independent HTTPS resource. GUI is now permitted because the R1 gate passed.
@@ -56,16 +56,21 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 - Forbidden: tracked helper binaries, private profiles/accounts, live registration in ordinary CI, edits outside the repository.
 
 ## Current Checkpoint
-- Closes: R3 (Windows onefile build, offline packaged smoke, documentation).
-- Smallest next action: commit/push the locally verified package implementation, then inspect the native Windows build, packaged crash smoke and published artifact/checksum.
-- Expected evidence: green packaging job with artifact and smoke report (graceful close and forced kill of the inner GUI process); Windows 10 manual acceptance stays with the user.
-- Stop or replan if: the packaged smoke reveals a concrete failure; diagnose it and repeat the affected gate. Windows 10 acceptance requires an actual Windows 10 test environment.
+- Closes: only the remaining R3 clean Windows 10 acceptance; implementation, packaged smoke and publication are verified.
+- Smallest next action: requires an authorized clean Windows 10 x64 environment with a standard user account. Run the verified EXE without Python/WireGuard/admin, verify real SOCKS HTTPS, uninterrupted primary traffic during probe search, reconnect and close cleanup, using the existing identities rather than registering new ones.
+- Expected evidence: an actual Windows 10 acceptance report. Server 2022 CI and Linux network evidence are not substitutes.
+- Stop condition: that OS/access is unavailable; no remaining code edit can supply the missing runtime observation.
 
 ## Current State
-- Resolved: R1 verified (reserved root cause fixed; patched helper built from pinned sources; opt-in gate passed locally). Vendor pipeline builds the patched helper in CI.
-- Last relevant evidence: 154 offline tests pass (3 Windows-only skips) locally, including real application smoke. Real controller network gate passed with 21 primary requests / 0 failures during probe search. Commit c59f13d is on origin; first native run 39240731907 exposed clock-resolution failures, now reproduced and fixed locally. Packaged build still awaits the corrected native gate.
-- Blocker: no local implementation blocker. Clean Windows 10 acceptance still needs an actual OS/VM; this Linux host exposes no virsh, QEMU, VirtualBox, Wine or PowerShell tools. Native Server 2022 CI is the available independent packaged test, not Windows 10 acceptance.
-- Next: R3 native packaged smoke and artifact, then record the remaining Windows 10 dependency separately.
+- Resolved: R1, R2 and R4; R3 implementation/build/offline smoke/documentation/publication. Vendor pipeline builds the patched helper in CI. Temporary local diagnostic tools/config copies removed; persistent primary/probe profiles preserved.
+- Last relevant evidence: 154 offline tests pass locally (3 Windows-only skips) and on native Windows (4 platform skips); Linux CI and Xvfb GUI smoke pass. Real controller network gate: 21 primary requests / 0 failures during probe search. Run 39241371383 passed the packaged GUI-only crash proof. Downloaded EXE/checksum and all three smoke JSON reports verified; no private profiles/configs are in the artifacts.
+- Blocker: clean Windows 10 acceptance requires an actual OS/VM and standard-account access. This Linux host has none of virsh, qemu-system-x86_64, VBoxManage, wine, pwsh or gh available; the provided native runner is Windows Server 2022, not Windows 10.
+- Next: resume R3 only when the missing Windows 10 environment is available; no known implementation or CI blocker remains.
+
+## External Blocker: R3 Windows 10 acceptance
+- Observed missing dependency: actual clean Windows 10 x64 with authorized interactive/network access under a non-elevated account.
+- Available alternatives checked: local Linux real-network gate and GUI smoke; native Windows Server 2022 tests, packaged launch from a Unicode/spaces path, graceful close and inner-GUI-only crash test. All pass, but none establishes the required Windows 10 result. Local VM/Windows tooling is absent; no Windows 10 endpoint or runner is supplied.
+- Smallest unlock: access to that OS/environment, then the acceptance described above. No new registrations, paid resources, VM/service/network reconfiguration or unapproved remote access was used to manufacture this evidence.
 
 ## Root cause and fix (2026-10-19)
 - Cloudflare WARP requires the 3-byte `reserved` client id inside WireGuard messages. `wgcf` does not emit it; upstream `wireproxy` has no support (issue #72).
@@ -99,7 +104,10 @@ Operational notes: `engage.cloudflareclient.com:2408` consistently times out in 
 - 2026-10-19: R2 verified: finder/controller/Tk UI implemented with 103 tests, live UI smoke and CI (Xvfb + native Windows) green; goal updated for R3.
 - 2026-10-19: R3 implementation added with real GUI smoke, pinned PyInstaller spec, native crash-driver tests and artifact workflow. Reproduced R2 consent/cancellation/ownership/deadline regressions fixed; local full suite 147 tests OK. Native packaged CI is next.
 - 2026-10-19: first native CI exposed timestamp-clock mismatch and early timeout; deterministic regressions and fixes added (154 tests OK). Real controller/probe network gate passed without new registration; native CI retry is next.
+- 2026-10-19: corrected native run 39241371383 passed all four jobs; EXE and checksum published, downloaded and verified. Graceful GUI cleanup and GUI-only crash proof passed. R3 blocked solely on the unavailable clean Windows 10 environment.
 
 ## Completion
-- Resolved outcomes: R1 verified; R2 verified; R4 verified. R3 in progress (packaging); Windows 10 acceptance outstanding.
-- Final status: active, continuing with R3.
+- Resolved outcomes: R1 verified; R2 verified; R4 verified. R3 build/offline acceptance/publication verified, but required Windows 10 acceptance remains blocked.
+- Commands/artifacts: local `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -q` (154 OK); native `python -m PyInstaller --noconfirm --clean packaging/WarpPocket.spec` and `python scripts/ci_smoke.py --exe dist/WarpPocket.exe --out build/smoke` (run 39241371383, successful); artifact/checksum verification above.
+- Constraint and diff-scope check: no new WARP registrations, no secret/runtime uploads or tracked binaries, no changes to docs/origin.md or system networking; existing profiles and active-primary guarantees preserved.
+- Final status: blocked only by missing Windows 10 acceptance access, not a completed MVP claim.
