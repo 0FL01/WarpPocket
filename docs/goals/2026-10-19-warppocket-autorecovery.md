@@ -24,7 +24,7 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
   - Acceptance: initial Connect stays one-shot; verified handoff supplies a profile clone and one session token to the existing monitor. Loss cancels/settles probe and stops old primary before replacement. Disconnect cancels before cleanup-related early returns; Close cancels and waits outside the controller mutex. Late results cannot activate, write cache or overlap identities. Healthy connected probe search remains available. No repeated profile/API/consent calls during recovery.
   - Primary evidence: deterministic controller lifecycle, cleanup, cancellation, cache and probe regressions; offline native-process recovery.
   - Status: verified
-  - Evidence: controller lifecycle/virtual-time regressions pass for initial one-shot failure, normal connected probe, loss/replacement, cancel during old Stop/probe settlement/backoff/late success, cache guards and concurrent Close. The ordinary offline native-process integration passes on Linux with actual Controller/Manager/Backend and a synthetic SOCKS child; real saved-profile acceptance also automatically replaces its stopped primary without repeated profile/API calls. Native Windows execution is retained under R6.
+  - Evidence: controller lifecycle/virtual-time regressions pass for initial one-shot failure, normal connected probe, loss/replacement, cancel during old Stop/probe settlement/backoff/late success, cache guards and concurrent Close. The ordinary offline native-process integration passes on Linux and Windows in run 39309173932 with actual Controller/Manager/Backend and a synthetic SOCKS child; real saved-profile acceptance also automatically replaces its stopped primary without repeated profile/API calls.
 - R3: progress to another existing WARP endpoint, without hot retry or flapping reset.
   - Source: corrected plan step 4 and user request to find another path if the current one is dead.
   - Acceptance: reuse Finder.Connect and Candidates; one canonical queue of at most 30 including old active, 180-second bounded cycles, preserved cursor and retry of deadline-partial last candidate. Health loss demotes old active; process exit allows it once first per new episode. First cycle immediate; subsequent cancellable pauses 2/5/10/20/30 seconds capped at 30, retained across unstable reconnects. Reset queue/backoff only after two consecutive full periodic health successes of the same primary. Successful current verification alone updates connection/cache; failure cycles do not.
@@ -42,13 +42,13 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
   - Acceptance: keep four connection states; Recovering implies Connecting, clears obsolete endpoint/latency/error, displays «Восстанавливаем соединение…» and enabled «Отключиться». Search/import are disabled, progress indeterminate even during probe settlement. Recovery events invalidate old probe consent/checkbox/notices/progress; batched events cannot leave stale stopped/cancelled/saved text. Recovery success uses a restored notice; cache warning has priority without disconnect. All recovery presentation resets after success/terminal/disconnect/close/new attempt.
   - Primary evidence: UI event/input/consent tests and rendered Connecting+Recovering at 100/125/150% DPI.
   - Status: verified
-  - Evidence: UI event, pointer/keyboard, consent, batching, warning-priority and recovery-exit tests pass with race detection. Actual GPU rendering passes all 24 fixtures including Connecting + Recovering at 100/125/150% DPI. Real Linux Gio/same-EXE graceful smoke passes; native packaged Windows UI remains a delivery gate under R6.
+  - Evidence: UI event, pointer/keyboard, consent, batching, warning-priority and recovery-exit tests pass with race detection. Actual GPU rendering passes all 24 fixtures including Connecting + Recovering at 100/125/150% DPI. Real Linux Gio/same-EXE graceful smoke and native packaged Windows Gio/clipboard/import/picker/graceful/GUI-only-crash smoke pass in run 39309173932.
 - R6: verified and delivered implementation, including real owned-process recovery.
   - Source: corrected plan step 6; user requires implementation, commit and push.
   - Acceptance: normal Linux/Windows tests exercise actual Controller+Manager+Backend with synthetic SOCKS subprocess: owned-primary exit leads to a different live PID, same port, verified Connected, retention beyond old trial deadline and cleanup. Preserve primary/probe continuity and routing assertions in the opt-in Linux real-network gate before killing only its primary; then require new live primary/full fresh health, zero API calls, unchanged identity files and max two engines. Existing root/tools/race/vet/render/native Windows packaged and EXE-only delivery gates pass. Commit/push the verified change and document detection/TCP limits honestly.
   - Primary evidence: targeted and broad Go gates, offline native recovery, opt-in existing-profile network gate, successful native Windows CI and matching tested rolling EXE.
   - Status: in_progress
-  - Evidence: root and independent tools tests/race/vet pass; ordinary real-process recovery passes on Linux, including same fixed port/new live PID and survival beyond its old trial budget. Current Windows CGO-disabled EXE and backend test binary cross-build successfully. Actual existing-profile network gate passes: 55 requests/zero failures on one continuous primary stream during probe, then owned-primary exit and automatic verified replacement in 14.966 seconds (an observation, not an SLA), max two engines/one of each role, no API/registration, unchanged identity files and cleanup. Native Windows CI, commit/push and final tested-EXE delivery remain.
+  - Evidence: root and independent tools tests/race/vet pass; ordinary real-process recovery passes on Linux and Windows, including same fixed port/new live PID and survival beyond its old trial budget. Actual existing-profile network gate passes: 55 requests/zero failures on one continuous primary stream during probe, then owned-primary exit and automatic verified replacement in 14.966 seconds (an observation, not an SLA), max two engines/one of each role, no API/registration, unchanged identity files and cleanup. Feature commit 6755bf23e8df8a391918502854b8613b27af76b1 is pushed; run 39309173932 passes Linux, Windows and the native Windows package (18,273,280-byte EXE, all graceful/GUI-only-crash checks). Publication is correctly skipped on the feature branch. Only master publication and matching tested-EXE verification remain.
 
 ### Constraints
 - Same local SOCKS 127.0.0.1:25344, existing WARP transport and strict TLS/remote SOCKS DNS/independent-resource health checks. No direct/system-DNS/environment-proxy fallback, new service or weakening of five-stage DNS or RU/VK split routing.
@@ -76,16 +76,16 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 6. **Evidence and delivery.** Add failure-capable/probe-owning controller fakes and focused virtual-time tests; offline real-process recovery in the normal backend test binary; extend the existing live Linux gate after prior continuity/routing proofs (new live PID barrier, same port, full fresh HTTPS, no API/profile change). Calculate overall test timeout from phase budgets (about eleven minutes), not by shortening production budgets. Run targeted then root/tools/race/vet, recovery render and existing native Windows package gates; update README, commit/push and verify final delivery.
 
 ## Current Checkpoint
-- Closes: R6 native verification and delivery, after locally verified R1–R5.
-- Smallest next action: commit/push the isolated autorecovery branch and inspect the existing Linux/Windows workflow, including the new ordinary native-process controller recovery test and packaged Gio lifecycle smoke.
-- Expected evidence: successful native Windows/root/package gates; only then fast-forward master, publish and compare its sole rolling EXE with the same-run tested artifact.
+- Closes: R6 master delivery; implementation and native verification are complete.
+- Smallest next action: fast-forward the verified autorecovery branch into master and require the existing successful-master-only publisher.
+- Expected evidence: successful master Linux/Windows/package/publication gates; compare the sole rolling EXE with that same run's tested artifact.
 - Replan if: a concrete mandatory gate exposes a mismatch; fix the smallest in-scope cause without weakening contracts.
 
 ## Current State
-- Baseline: master/origin 27d44834e2276c125a68c94cda9e0c0369b88f41; implementation is isolated on autorecovery until native gates pass.
-- Last evidence: root `go test -mod=readonly -race ./... -count=1 -timeout=5m` and `go vet -mod=readonly ./...`; tools tests/race/vet; 24 native rendered frames; actual Linux Gio graceful smoke; Windows CGO-disabled cross-build (18,267,648 bytes); real existing-profile `TestExistingProfilesAutomaticRecovery` passes with denied API, fresh full health/new primary and unchanged profiles/accounts. No policy/source pins/dependencies/workflow/publisher or historical goals changed.
+- Baseline: 27d44834e2276c125a68c94cda9e0c0369b88f41; verified feature commit 6755bf23e8df8a391918502854b8613b27af76b1 is pushed on autorecovery, ready for master delivery.
+- Last evidence: local root/tools tests/race/vet, 24 rendered frames, Linux Gio smoke and real saved-profile recovery all pass. Run 39309173932 also passes native Linux/Windows tests and packaged Windows Gio lifecycle/owner-crash checks. No policy/source pins/dependencies/workflow/publisher or historical goals changed; private profiles/accounts and design input remain untouched.
 - Blocker: none.
-- Next: commit/push, native Linux/Windows pipeline, then verified master/rolling delivery.
+- Next: verified master/rolling delivery.
 
 ## Material Decisions
 - 2026-10-19: use the conservative new-profile-only 25-second keepalive default; zero remains a supported explicit disabled value in existing/imported profiles.
@@ -94,6 +94,7 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 ## Checkpoint History
 - 2026-10-19: corrected audited plan copied here at user request; execution begins on the existing verified Go/Gio baseline.
 - 2026-10-19: R1–R5 implemented and locally verified, including failure precedence/latch, single-owner recovery, progressive candidate/backoff behavior, new-profile-only keepalive and truthful UI. R6 local real-process/live-network/render gates pass; native Windows delivery is next. No new registrations or identity-file changes.
+- 2026-10-19: feature 6755bf2 is pushed; run 39309173932 passes all required feature-branch jobs, including ordinary native Windows controller recovery and packaged Gio/engine lifecycle. Only master publication and downloaded-EXE comparison remain.
 
 ## Completion
-- Implementation and local verification complete; native Windows and verified delivery remain. No final completion claim yet.
+- Implementation and local/native verification complete; verified master/rolling delivery remains. No final completion claim yet.
