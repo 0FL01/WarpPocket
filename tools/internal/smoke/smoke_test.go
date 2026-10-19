@@ -129,6 +129,12 @@ func (f *fakePlatform) Launch(argv []string, cwd string) (Launch, error) {
 	if f.afterReport != nil {
 		f.afterReport(mode)
 	}
+	// The driver measures start-to-ready with the monotonic clock. Windows
+	// advances that clock in ~15.6ms steps, so a fake launch that finishes in
+	// microseconds can legitimately be measured as 0ms and fail the positive
+	// measurement proof. Span at least one clock step, as a real engine start
+	// does, so the recorded value is representable on every platform.
+	time.Sleep(50 * time.Millisecond)
 	return launch, nil
 }
 
