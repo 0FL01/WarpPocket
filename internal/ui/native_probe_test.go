@@ -32,3 +32,36 @@ func TestNativeProbeRequiresImportAndSafePickerClose(t *testing.T) {
 		p.cancel()
 	}
 }
+
+func TestNativeProbeDiagnosticStagesRemainDistinct(t *testing.T) {
+	p := newNativeProbe(true, "private-path-not-in-diagnostics.conf")
+	defer p.cancel()
+	if p.stage() != "clipboard_write" {
+		t.Fatal(p.stage())
+	}
+	p.readSent = true
+	if p.stage() != "clipboard_wait" {
+		t.Fatal(p.stage())
+	}
+	p.clipboardOK, p.pickerRequested = true, true
+	if p.stage() != "import_dialog" {
+		t.Fatal(p.stage())
+	}
+	p.pickerSeen = true
+	if p.stage() != "import_result" {
+		t.Fatal(p.stage())
+	}
+	p.importedFile()
+	if p.stage() != "cancel_start" {
+		t.Fatal(p.stage())
+	}
+	p.pickerRequested, p.pickerSeen = true, true
+	if p.stage() != "closing_event" {
+		t.Fatal(p.stage())
+	}
+	p.closing(true)
+	p.pickerCancelled, p.cancelDone = true, true
+	if p.stage() != "complete" || !p.ready() {
+		t.Fatal(p.stage())
+	}
+}

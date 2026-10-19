@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -146,6 +147,22 @@ func Run(path string, wait bool) (result error) {
 		}
 	}
 	end := time.Now().Add(180 * time.Second)
+	stage := "window_start"
+	progress := func(next string, frames int) error {
+		data, err := json.MarshalIndent(struct {
+			SchemaVersion int    `json:"schema_version"`
+			Mode          string `json:"mode"`
+			Stage         string `json:"stage"`
+			Frames        int    `json:"frames"`
+		}{1, report.Mode, next, frames}, "", "  ")
+		if err != nil {
+			return err
+		}
+		return storage.AtomicWrite(path+".progress.json", data)
+	}
+	if err := progress(stage, 0); err != nil {
+		return model.E("smoke_report", "Не удалось записать этап проверки.")
+	}
 	err = ui.Run(owned, ui.Options{Title: "WarpPocket — offline Go/Gio smoke", Diagnostics: a.Diagnostics, Licenses: resources.Licenses, NativeChecks: native, CloseWithPicker: !wait, NativeProfilePath: profilePath,
 		Import: func(data []byte, role string) error {
 			if err := a.Import(data, role); err != nil {
@@ -162,6 +179,13 @@ func Run(path string, wait bool) (result error) {
 			return nil
 		},
 		OnFrame: func(info ui.FrameInfo) bool {
+			if next := info.NativeStage; next != "" && next != stage {
+				stage = next
+				if err := progress(stage, info.Count); err != nil {
+					result = model.E("smoke_report", "Не удалось записать этап проверки.")
+					return true
+				}
+			}
 			if !ready && info.Count >= 3 && (!native || info.NativeChecks) {
 				ready = true
 				report.Checks["gio_frame"] = info.Width > 0 && info.Height > 0
@@ -181,6 +205,10 @@ func Run(path string, wait bool) (result error) {
 		}})
 	owned.Close()
 	if err != nil {
+		var appError *model.Error
+		if errors.As(err, &appError) {
+			return appError
+		}
 		return model.E("smoke_window", "Не удалось отрисовать окно проверки.")
 	}
 	if result != nil {

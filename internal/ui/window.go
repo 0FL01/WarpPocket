@@ -18,6 +18,7 @@ type FrameInfo struct {
 	Count, Width, Height int
 	PxPerDp              float32
 	NativeChecks         bool
+	NativeStage          string
 }
 type Options struct {
 	Title       string
@@ -140,7 +141,11 @@ func Run(controller Controller, options Options) error {
 			v.Layout(gtx)
 			event.Frame(gtx.Ops)
 			frames++
-			if options.OnFrame != nil && options.OnFrame(FrameInfo{Count: frames, Width: event.Size.X, Height: event.Size.Y, PxPerDp: event.Metric.PxPerDp, NativeChecks: probe != nil && probe.ready()}) {
+			info := FrameInfo{Count: frames, Width: event.Size.X, Height: event.Size.Y, PxPerDp: event.Metric.PxPerDp}
+			if probe != nil {
+				info.NativeChecks, info.NativeStage = probe.ready(), probe.stage()
+			}
+			if options.OnFrame != nil && options.OnFrame(info) {
 				startClose()
 			}
 			if probe != nil && probe.err != nil {

@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"os"
+	"runtime"
 	"time"
 	"unsafe"
 
@@ -13,7 +14,8 @@ import (
 var (
 	probeUser32      = windows.NewLazySystemDLL("user32.dll")
 	probePostMessage = probeUser32.NewProc("PostMessageW")
-	probeSendMessage = probeUser32.NewProc("SendMessageW")
+	probeSendMessage = probeUser32.NewProc("SendMessageTimeoutW")
+	probeIsWindow    = probeUser32.NewProc("IsWindow")
 )
 
 // Only cancel this smoke process's own common-file dialog. No foreground-window
@@ -42,8 +44,10 @@ func completeNativePicker(ctx context.Context, seen chan<- struct{}, allow <-cha
 		}
 	}
 	seen <- struct{}{}
+	cancelDialog := func() { probePostMessage.Call(uintptr(dialog), 0x0010, 0, 0) }
 	select {
 	case <-ctx.Done():
+		cancelDialog()
 		return model.E("native_picker", "Не выполнена проверка закрытия диалога.")
 	case <-allow:
 	}
@@ -54,11 +58,31 @@ func completeNativePicker(ctx context.Context, seen chan<- struct{}, allow <-cha
 		if err != nil {
 			return model.E("native_import", "Не удалось проверить выбор профиля.")
 		}
-		probeSendMessage.Call(uintptr(dialog), 0x0468, 0x0480, uintptr(unsafe.Pointer(path)))  // CDM_SETCONTROLTEXT, edt1
+		var reply uintptr
+		sent, _, _ := probeSendMessage.Call(uintptr(dialog), 0x0468, 0x0480, uintptr(unsafe.Pointer(path)), 0x0002, 2000, uintptr(unsafe.Pointer(&reply))) // bounded CDM_SETCONTROLTEXT, edt1
+		runtime.KeepAlive(path)
+		if sent == 0 {
+			cancelDialog()
+			return model.E("native_import", "Не удалось заполнить проверочный путь.")
+		}
 		if result, _, _ := probePostMessage.Call(uintptr(dialog), 0x0111, 1, 0); result == 0 { // WM_COMMAND, IDOK
+			cancelDialog()
 			return model.E("native_import", "Не удалось выбрать проверочный профиль.")
 		}
-		return nil
+		// Selection is not complete merely because IDOK was posted. Retain the
+		// owned dialog until it actually closes, and cancel it on failure so a
+		// diagnostic timeout cannot leave an uncancellable native modal open.
+		for {
+			if alive, _, _ := probeIsWindow.Call(uintptr(dialog)); alive == 0 {
+				return nil
+			}
+			select {
+			case <-ctx.Done():
+				cancelDialog()
+				return model.E("native_import", "Не завершён выбор проверочного профиля.")
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
 	}
 	if result, _, _ := probePostMessage.Call(uintptr(dialog), 0x0010, 0, 0); result == 0 { // WM_CLOSE
 		return model.E("native_picker", "Не удалось отменить нативный диалог.")

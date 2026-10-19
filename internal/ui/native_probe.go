@@ -116,3 +116,34 @@ func (p *nativeProbe) closing(pickerBusy bool) {
 func (p *nativeProbe) ready() bool {
 	return p.clipboardOK && p.imported && p.pickerCancelled && p.cancelDone && p.err == nil && (!p.closeWithPicker || p.closeAborted)
 }
+
+// Only fixed stages/safe error codes leave the probe; clipboard contents,
+// selected paths and profile data are never included in smoke diagnostics.
+func (p *nativeProbe) stage() string {
+	switch {
+	case p.err != nil:
+		return model.Code(p.err)
+	case !p.clipboardOK:
+		if p.readSent {
+			return "clipboard_wait"
+		}
+		return "clipboard_write"
+	case !p.imported:
+		if p.pickerSeen {
+			return "import_result"
+		}
+		return "import_dialog"
+	case !p.pickerRequested:
+		return "cancel_start"
+	case !p.pickerSeen:
+		return "cancel_dialog"
+	case p.closeWithPicker && !p.closeAborted:
+		return "closing_event"
+	case !p.pickerCancelled:
+		return "cancel_result"
+	case !p.cancelDone:
+		return "cancel_ack"
+	default:
+		return "complete"
+	}
+}
