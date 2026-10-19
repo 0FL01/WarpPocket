@@ -5,6 +5,7 @@ package smoke
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -157,6 +158,16 @@ func TestNativeWindowsGUIOnlyTerminationWithRetainedSafetyJob(t *testing.T) {
 	ready, err := eventually(context.Background(), 20*time.Second, 10*time.Millisecond, func() (bool, error) {
 		encoded, err := os.ReadFile(pidFile)
 		if os.IsNotExist(err) {
+			// Observe the retained owner, not a PID reopened after failure. An
+			// early helper exit must not become an opaque readiness timeout.
+			exited, exitErr := launch.GUI().Exited(0)
+			if exitErr != nil {
+				return false, exitErr
+			}
+			if exited {
+				code, codeErr := launch.GUI().ExitCode()
+				return false, fmt.Errorf("synthetic owner exited before readiness: code=%d error=%v", code, codeErr)
+			}
 			return false, nil
 		}
 		if err != nil {
@@ -166,7 +177,15 @@ func TestNativeWindowsGUIOnlyTerminationWithRetainedSafetyJob(t *testing.T) {
 		return err == nil, err
 	})
 	if err != nil || !ready {
-		t.Fatal("synthetic owner failed to launch nested-job engine", err)
+		exited, exitErr := launch.GUI().Exited(0)
+		var exitCode uint32
+		var codeErr error
+		if exited {
+			exitCode, codeErr = launch.GUI().ExitCode()
+		}
+		pids, jobErr := launch.(*windowsLaunch).processIDs()
+		ack, ackErr := os.ReadFile(pidFile + ".ready")
+		t.Fatalf("synthetic owner failed to launch nested-job engine: error=%v owner=%d exited=%t exit_error=%v exit_code=%d code_error=%v owned_pids=%v job_error=%v child_ack=%t ack_error=%v", err, launch.GUI().PID(), exited, exitErr, exitCode, codeErr, pids, jobErr, bytes.Equal(ack, []byte("ready")), ackErr)
 	}
 	child, err := platform.OpenProcess(childPID)
 	if err != nil {

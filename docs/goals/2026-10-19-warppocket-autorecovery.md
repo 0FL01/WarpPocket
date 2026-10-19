@@ -65,6 +65,7 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 - internal/controller and tests for guarded session ownership, recovery queue/cursor/backoff, settlement, cancellation and cache discipline; internal/model/state.go and internal/ui/tests for additive recovery presentation.
 - One offline external backend-package integration test reusing its TestMain synthetic engine and sequential fixed-port test binary, so different Go package test binaries do not race for port 25344.
 - Existing internal/acceptance/network_test.go opt-in gate, README and this goal. Existing command/process/storage/API interfaces, source pins, dependencies and workflow/publisher remain unless a concrete regression caused by this diff requires a minimal documented correction.
+- R6 delivery-gate exception: master run 39310416301 failed the unchanged native smoke helper's readiness wait before root Windows tests. Permit a diagnostic-only change to tools/internal/smoke/platform_windows_test.go to observe retained owner exit/exit code and stable owned-process state on readiness failure; do not alter launch, cleanup, time budgets or passing assertions.
 - No generated binaries, runtime state, private keys, test fixtures from real profiles or design directory added to Git. Use a feature branch until local/native gates pass.
 
 ## Copied Corrected Implementation Plan
@@ -76,14 +77,14 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 6. **Evidence and delivery.** Add failure-capable/probe-owning controller fakes and focused virtual-time tests; offline real-process recovery in the normal backend test binary; extend the existing live Linux gate after prior continuity/routing proofs (new live PID barrier, same port, full fresh HTTPS, no API/profile change). Calculate overall test timeout from phase budgets (about eleven minutes), not by shortening production budgets. Run targeted then root/tools/race/vet, recovery render and existing native Windows package gates; update README, commit/push and verify final delivery.
 
 ## Current Checkpoint
-- Closes: R6 master delivery; implementation and native verification are complete.
-- Smallest next action: fast-forward the verified autorecovery branch into master and require the existing successful-master-only publisher.
+- Closes: R6 master delivery; feature implementation and feature-branch native verification are complete.
+- Smallest next action: diagnose the unchanged native test helper's readiness failure on master using retained process handles, then require a successful full master pipeline and publisher.
 - Expected evidence: successful master Linux/Windows/package/publication gates; compare the sole rolling EXE with that same run's tested artifact.
 - Replan if: a concrete mandatory gate exposes a mismatch; fix the smallest in-scope cause without weakening contracts.
 
 ## Current State
-- Baseline: 27d44834e2276c125a68c94cda9e0c0369b88f41; verified feature commit 6755bf23e8df8a391918502854b8613b27af76b1 is pushed on autorecovery, ready for master delivery.
-- Last evidence: local root/tools tests/race/vet, 24 rendered frames, Linux Gio smoke and real saved-profile recovery all pass. Run 39309173932 also passes native Linux/Windows tests and packaged Windows Gio lifecycle/owner-crash checks. No policy/source pins/dependencies/workflow/publisher or historical goals changed; private profiles/accounts and design input remain untouched.
+- Baseline: 27d44834e2276c125a68c94cda9e0c0369b88f41; verified feature 6755bf23e8df8a391918502854b8613b27af76b1 and native-proof record are pushed to master at 770b71b9535d171fe7fa5c430acd2df8812d46c5.
+- Last evidence: all local and feature-branch gates pass, including native Windows recovery and packaged lifecycle in run 39309173932. Master run 39310416301 passes Linux but fails the unchanged tools TestNativeWindowsGUIOnlyTerminationWithRetainedSafetyJob readiness wait at 20 seconds; root Windows/package/publication are not green. The wait reports neither owner exit nor the child's readiness state. Add only retained-handle diagnostics before deciding whether this is a transient launch or a reproducible cause; no test or security requirement is waived. Private profiles/accounts and design input remain untouched.
 - Blocker: none.
 - Next: verified master/rolling delivery.
 
@@ -95,6 +96,7 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 - 2026-10-19: corrected audited plan copied here at user request; execution begins on the existing verified Go/Gio baseline.
 - 2026-10-19: R1–R5 implemented and locally verified, including failure precedence/latch, single-owner recovery, progressive candidate/backoff behavior, new-profile-only keepalive and truthful UI. R6 local real-process/live-network/render gates pass; native Windows delivery is next. No new registrations or identity-file changes.
 - 2026-10-19: feature 6755bf2 is pushed; run 39309173932 passes all required feature-branch jobs, including ordinary native Windows controller recovery and packaged Gio/engine lifecycle. Only master publication and downloaded-EXE comparison remain.
+- 2026-10-19: master 770b71b is pushed; Linux passes, but a previously passing unchanged native test helper times out before reporting its child. R6 remains open; add bounded, handle-based failure diagnostics without weakening ownership or readiness assertions.
 
 ## Completion
 - Implementation and local/native verification complete; verified master/rolling delivery remains. No final completion claim yet.
