@@ -405,10 +405,7 @@ func (v *View) mainLayout(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return layout.Flex{}.Layout(gtx,
-								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-									return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-										layout.Rigid(v.label(36, "WarpPocket", ink, true)), gap(8), layout.Rigid(v.label(13, "Простой локальный SOCKS5 через WARP.", muted, false)))
-								}),
+								layout.Flexed(1, v.label(36, "WarpPocket", ink, true)),
 								layout.Rigid(doodle))
 						}), gap(22),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -452,8 +449,7 @@ func (v *View) mainLayout(gtx layout.Context) layout.Dimensions {
 							return layout.Dimensions{}
 						}), gap(18),
 						layout.Rigid(v.label(13, v.endpointText(), muted, false)), gap(7),
-						layout.Rigid(v.label(13, v.notice, muted, false)), gap(14),
-						layout.Rigid(v.label(12, "Локальный SOCKS5-прокси. Только TCP; не системный VPN.", muted, false)),
+						layout.Rigid(v.label(13, v.notice, muted, false)),
 					)
 				})
 			}),
