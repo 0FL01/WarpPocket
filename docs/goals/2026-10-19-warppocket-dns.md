@@ -1,6 +1,6 @@
 # Goal: Embedded ordered WARP DNS
 
-Status: active
+Status: complete
 Source: user DNS request and approved implementation plan; «реализовать и коммит пуш».
 Last updated: 2026-10-19
 
@@ -28,8 +28,8 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
   - Source: approved plan and explicit commit/push request; existing rolling release requirement.
   - Acceptance: health connect-timeout accommodates DNS failover (5 seconds); pinned helper build runs native Go tests; Linux/Windows gates and packaged smoke pass; commit is on origin/master and rolling contains only the matching WarpPocket.exe.
   - Primary evidence: relevant/full tests, GitHub Actions, rolling tag/asset and downloaded EXE.
-  - Status: in_progress
-  - Evidence: 177 local Python tests OK (3 platform skips); vendor tests verify native host targeting and abort-before-build on native test failure. Production build --platform all ran native DNS tests and built both helpers; commit/push and native CI/publication remain.
+  - Status: verified
+  - Evidence: 177 local Python tests OK (3 platform skips); native Windows passes 177 tests (4 platform skips). Vendor tests verify native host targeting and abort-before-build on native test failure. Production build --platform all ran native DNS tests and built both helpers. Commit 9c08438fc127599c0d1aae45334e8ed7e9380548 is on origin/master; Actions run 39252795307 passed all five jobs, including native Linux/Windows DNS gates, packaged normal-close/GUI-only-crash smoke and rolling publication. Public rolling tag/release body match that commit/run; only WarpPocket.exe is attached. Downloaded release EXE (29,395,768 bytes) matches the same-run tested CI artifact byte-for-byte.
 
 ### Constraints
 - Keep upstream source versions/hashes pinned and reserved support intact. Patch only the isolated source copy, never the global Go module cache.
@@ -47,16 +47,15 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 - Allowed generated artifacts: ignored helper/build outputs and private local reports. Forbidden: committed binaries, accounts/config secrets and extra release assets.
 
 ## Current Checkpoint
-- Closes: R3 integration/publication.
-- Smallest next action: commit/push the verified changes; inspect native Linux/Windows Go/Python gates, packaged smoke and the rolling EXE.
-- Expected evidence: all five jobs green and only a matching WarpPocket.exe in the updated rolling release.
-- Stop or replan if: a native gate reveals a concrete failure; diagnose that behavior without expanding scope.
+- Closed: R1/R2/R3. Implementation, local/live verification, native CI and rolling publication are complete.
+- Closure evidence: run 39252795307 succeeded; the downloaded rolling EXE matches its tested artifact, and the rolling tag matches the pushed implementation commit.
+- Next: none for this frozen objective; stop substantive work.
 
 ## Current State
-- Resolved: R1 and R2; no source profile migrations or system DNS changes.
-- Last relevant evidence: 177 Python tests OK; native Go DNS tests passed in 6.021 s; both production helpers built with Go 1.26.9. Real existing-profile HTTPS/probe gate and cleanup passed.
+- Resolved: R1, R2 and R3; no source profile migrations or system DNS changes.
+- Last relevant evidence: 177 Python tests OK locally and on Windows; seven native Go DNS test groups/23 scenarios; both helpers built with Go 1.26.9. Real existing-profile HTTPS/probe gate and cleanup passed. All five native CI/publication jobs succeeded, and the release EXE matches the tested artifact.
 - Blocker: none.
-- Next: commit/push, native CI and rolling publication.
+- Next: none; the approved DNS objective is complete.
 
 ## Material Decisions
 - A responding negative NXDOMAIN/NODATA is terminal, not an excuse to bypass the primary DNS; SERVFAIL/REFUSED keep the existing retry classification.
@@ -66,7 +65,10 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 ## Checkpoint History
 - 2026-10-19: contract frozen from the approved plan; implementation started.
 - 2026-10-19: R1/R2 verified locally, including virtual UDP/TCP tests and real WARP gate; full Python suite 177 OK and both helper targets built. Native publication is next.
+- 2026-10-19: 9c08438 pushed; run 39252795307 passed all five jobs. Verified the rolling tag, sole EXE attachment and downloaded binary equality; R3 verified and closure check passed.
 
 ## Completion
-- Resolved outcomes: R1/R2 verified; R3 in progress.
-- Final status: active.
+- Resolved outcomes: R1/R2/R3 verified.
+- Commands and artifacts: local full unittest suite (177 OK); scripts/build_wireproxy.py --platform all (native DNS tests and both targets); private existing-profile dns-gate-2026-10-19.json (passed, unchanged profiles/accounts, no registrations, cleanup verified); Actions run 39252795307 and https://github.com/0FL01/WarpPocket/releases/download/rolling/WarpPocket.exe (download matches tested artifact).
+- Constraint and diff-scope check: pinned upstream versions/hashes and Reserved support unchanged; no global Go-cache edits, system/direct DNS fallback, profile migrations, registrations, tracked binaries/secrets or release sidecars. Existing search/ownership and rolling gates preserved. The separate Windows 10 MVP gate is outside this objective.
+- Final status: complete.
