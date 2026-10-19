@@ -1,6 +1,6 @@
 # Goal: Ship WARP-compatible handshake junk and recovery diagnostics
 
-Status: active
+Status: complete
 Source: user-approved RECON plan and instruction to implement, commit, push and verify GitHub Actions
 Last updated: 2026-10-20
 
@@ -20,8 +20,8 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
   - Source: approved plan, Changes 2.
   - Acceptance: common bind wrapper covers initial/repeated initiations, standard and Windows default binds, batching, errors and concurrent shutdown without new timers/processes/sockets.
   - Primary evidence: native `TestWarpPocketJunk` gate, Linux race run and Windows Actions gate.
-  - Status: in_progress
-  - Evidence: Linux preparation/native gate and explicit junk race gate passed, including IPv4/IPv6 same-source-port/Reserved loopback and the real upstream retry timer. Windows cross-build passed; native WinRingBind evidence awaits Actions.
+  - Status: verified
+  - Evidence: Linux preparation/native gate and explicit junk race gate passed, including IPv4/IPv6 same-source-port/Reserved loopback and the real upstream retry timer. Windows job [118311524864](https://github.com/0FL01/WarpPocket/actions/runs/39325894637/job/118311524864) passed the native junk gate with actual `*conn.WinRingBind BatchSize=1` and `StdNetBind`, both IPv4/IPv6, plus real worker retry (5.15s).
 - R2: Bounded private diagnostics distinguish periodic health failures, process exit, recovery start reason and verified recovery, without arbitrary error text or cancellation failures.
   - Source: approved plan, Changes 1.
   - Acceptance: existing logger and controller callback record only allowlisted events outside the controller mutex, with recovery behavior unchanged.
@@ -32,14 +32,14 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
   - Source: approved plan, Changes 3-4.
   - Acceptance: exact-anchor/payload/gate tests pass, dependency pins and preserved policy payloads are unchanged, root application regression gates pass.
   - Primary evidence: tools tests, source preparation, application tests/vet and existing smoke.
-  - Status: in_progress
-  - Evidence: tools tests and race suite, exact-anchor/payload/failure-before-publication checks, all three native preparation gates, application tests/vet/race and Windows cross-build passed. README updated; native packaged smoke awaits Actions.
+  - Status: verified
+  - Evidence: tools tests and race suite, exact-anchor/payload/failure-before-publication checks, all three native preparation gates, application tests/vet/race and Windows cross-build passed. README updated. Native package job [118313315130](https://github.com/0FL01/WarpPocket/actions/runs/39325894637/job/118313315130) passed actual Gio/clipboard/picker/import, same-EXE engine, graceful cleanup and forced-owner-termination cleanup; smoke reported `ok: true` and `cleanup.ok: true`.
 - R4: Commit and push only this work and follow the exact pushed revision through successful Linux/Windows verification, Windows packaging/smoke and rolling publication.
   - Source: latest user instruction.
   - Acceptance: remote master contains the implementation and its Actions run concludes successfully, including all delivery jobs.
   - Primary evidence: Git revision/remote comparison and GitHub Actions run/jobs.
-  - Status: in_progress
-  - Evidence: remote master matched baseline before implementation; delivery pending after successful local gates.
+  - Status: verified
+  - Evidence: pushed implementation `9d6fe47fad65011b7ec14a9d55f653756b9bb4a8` and verified remote master plus rolling tag at that SHA. [Actions run 39325894637](https://github.com/0FL01/WarpPocket/actions/runs/39325894637) completed successfully on attempt 1: Windows tests, Ubuntu tests, native Windows package/smoke and rolling publication all succeeded. The public release contained exactly `WarpPocket.exe` (18,656,256 bytes), matching native smoke's executable size.
 
 ### Constraints
 
@@ -61,17 +61,15 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 
 ## Current Checkpoint
 
-- Closes: R1, R3, R4.
-- Smallest next action: commit/push the verified implementation and inspect its exact Actions revision through Windows tests/package/smoke and rolling publication.
-- Expected evidence: complete successful Linux/Windows workflow, including actual WinRingBind loopback.
-- Stop or replan if: a job fails; inspect its logs and correct the concrete in-scope cause before delivery is considered verified.
+- Closed: R1-R4, with all local and native implementation delivery evidence successful.
+- No substantive work remains. The closure commit changes only this evidence document; its delivery workflow is also followed before the final user report.
 
 ## Current State
 
 - Baseline: `6d7de04`; only pre-existing untracked design directory.
-- Resolved: implementation and all local gates. Only the existing native CI/delivery gates remain.
-- Blocker: no known implementation/delivery blocker. The affected Windows machine/network is not exposed by available tools; its 60-minute baseline/junk acceptance cannot be substituted by Server 2022 CI.
-- Next: push and follow Actions. Local instrumented comparison EXEs are retained under ignored `build/handshake-junk-comparison/`; neither is a natively smoke-tested release artifact.
+- Resolved: implementation, all local gates, native Windows/Ubuntu verification, Windows package/smoke and rolling publication. Implementation run `39325894637` completed successfully.
+- Blocker: none for this implementation/delivery. The affected Windows machine/network is not exposed by available tools; its 60-minute baseline/junk efficacy acceptance is explicitly unverified and cannot be substituted by Server 2022 CI.
+- Delivered: [tested Windows EXE](https://github.com/0FL01/WarpPocket/releases/download/rolling/WarpPocket.exe). Local instrumented comparison EXEs are retained under ignored `build/handshake-junk-comparison/`; neither is a natively smoke-tested release artifact.
 - Baseline EXE SHA256: `4a56cccf14841aad7a9fd8a80417ffe15a5578323543641ab1c43e9fa511b301` (diagnostics added, old prepared engine, no junk).
 - Junk EXE SHA256: `48dec45c7fb6061b245e7279afbce7605721503c920c253c703da69dc0d3d2ad` (same diagnostic sources, new prepared engine).
 
@@ -84,10 +82,12 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 - 2026-10-20: Contract frozen from the approved plan and latest delivery instruction; no tracked source changes at baseline.
 - 2026-10-20: First preparation correctly stopped before publication when the new test incorrectly required privileged Linux `SetMark(0)` success. Replaced that assertion with exact argument/error delegation on a test bind, preserving unprivileged operation. Actual loopback IPv4/IPv6 and worker retry then passed; no production bypass added.
 - 2026-10-20: Local gates green: `go -C tools test -mod=readonly -count=1 ./...`; preparation; `go test -mod=readonly -count=1 ./...`; `go vet -mod=readonly ./...`; full root/tools `-race -count=1`; explicit prepared wireproxy `-race . -run '^TestWarpPocketJunk' -count=1 -v`; Windows CGO=0 x64 cross-build. Existing policy payloads, dependency pins, profiles and unrelated design directory are untouched. Native graphical/Windows smoke remains with existing CI.
+- 2026-10-20: Pushed implementation `9d6fe47` to master. Windows native junk, application tests and vet passed; loopback logs explicitly prove WinRingBind rather than fallback. Remaining delivery is monitored in run `39325894637`.
+- 2026-10-20: Run `39325894637` completed successfully on attempt 1, with all four jobs successful. Native packaged smoke confirmed graceful/forced cleanup, stopped owned engines and closed port. Remote master/rolling matched the implementation revision and the public release exposed the single tested EXE. Closure comparison found only approved source/tests/docs, unchanged dependency pins/policy payloads and the untouched unrelated design directory.
 
 ## Completion
 
-- Resolved outcomes: pending.
-- Commands and artifacts: pending.
-- Constraint and diff-scope check: pending.
-- Final status: active.
+- Resolved outcomes: R1-R4 verified.
+- Commands and artifacts: all local checks listed above; successful native [implementation run](https://github.com/0FL01/WarpPocket/actions/runs/39325894637), Windows [smoke artifact](https://github.com/0FL01/WarpPocket/actions/runs/39325894637/artifacts/12222158619) and [EXE artifact](https://github.com/0FL01/WarpPocket/actions/runs/39325894637/artifacts/12222377426); published rolling EXE.
+- Constraint and diff-scope check: only the approved 13 source/test/doc files; no new dependency, profile format, identity, timer, process, socket or fallback. Existing DNS/routing/ownership/private-storage gates pass. `git diff --check` and staged added-line secret-pattern checks passed. Untracked design work is retained.
+- Final status: complete for implementation and verified delivery, not a claim of affected-network DPI resilience.
