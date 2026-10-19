@@ -42,7 +42,7 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
   - Acceptance: no runtime Python or Python build/release invocation; Linux/Windows Go CI, native policy and packaged same-EXE smoke pass. Master-only success-gated serialized rolling publication preserves stale-build/draft safeguards and attaches only matching WarpPocket.exe. Record actual EXE size/startup/all-process working-set comparison with the prior 29,484,399-byte build; do not invent a size or GPU compatibility claim. README describes new Go commands/limits.
   - Primary evidence: workflow and tool tests; downloaded release compared with the same-run tested artifact; measured baseline/new footprint; source/dependency inspection.
   - Status: in_progress
-  - Evidence: Go-only source/preparation/build/smoke/publisher tests and native Linux/Windows core/vet pass. Run 39295123717 passes the full packaged GUI/engine smoke: EXE 18,237,952 bytes, wait ready 805.8396 ms and all two owned processes sum to 97,345,536 working-set bytes in that single CI sample. Baseline comparison fails with baseline_working_set; its original helper also hardcodes exactly three processes, contrary to the all-owned-process measurement requirement. A deterministic four-member regression reproduces that rejection. Measurement now retains required launcher/GUI/engine identities, rejects missing/duplicate/zero samples, and includes every stable job member; native query failures retain their safe code. New-application exact GUI+engine crash checks are unchanged. Native baseline retry and master/rolling publication remain required.
+  - Evidence: Go-only source/preparation/build/smoke/publisher tests and native Linux/Windows core/vet pass. Run 39296627544 passes all migration-branch gates, including full native GUI/engine smoke and the all-owned-process baseline comparison; release is correctly skipped on that branch. Downloaded safe evidence matches the CI artifact digest. Old/new EXE bytes: 29,484,399 / 18,237,952 (38.14% reduction); ready: 3305.118 / 807.1651 ms; total working set: 91,340,800 / 96,002,048 bytes across four / two owned processes. RAM increased 5.10% in this single sample; differing Tk/Gio smoke checks preclude a universal startup/memory claim. Measurement retains every stable job member and validates required identities, uniqueness and nonzero samples. Only master/rolling delivery and matching-EXE verification remain.
 
 ### Constraints
 - Breaking changes to implementation/public internal APIs are approved. Do not silently destroy or migrate private user identities; preserve profiles/accounts/import safety and cache compatibility described below.
@@ -74,16 +74,16 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 8. **Remove old runtime and close.** Delete Python backend/GUI/build/release path and PyInstaller packaging only after required Go behavior passes. Keep Python only for useful tests, not source compatibility theatre. Update README, measure old/new footprint without claiming unmeasured improvement, run native/live/packaged gates, commit/push and compare the published EXE with its tested artifact. Stop after closure.
 
 ## Current Checkpoint
-- Closes: measured R5 footprint and final Go-only master delivery; R1–R4 are verified.
-- Smallest next action: rerun the baseline comparison with all owned process memory included, then deliver master only after the full migration-branch pipeline succeeds. Native GUI/clipboard/import/picker/graceful and GUI-only crash proof are already green.
-- Expected evidence: successful Linux/Windows Go tests and native packaged smoke plus safe footprint comparison. Only then deliver master and compare its sole rolling EXE asset with the tested artifact.
+- Closes: final Go-only master delivery; R1–R4 and the measured R5 footprint are verified.
+- Smallest next action: fast-forward the verified migration into master, require its canonical Go workflow, then compare the sole rolling EXE asset with that same run's tested artifact.
+- Expected evidence: successful master Linux/Windows/package/publication jobs, matching origin/rolling SHA and only WarpPocket.exe attached to the release.
 - Replan if: an observed native failure exposes a concrete ABI, graphics or ownership cause; diagnose it rather than weakening a gate or publishing the bootstrap demo.
 
 ## Current State
 - Baseline: b3239e85e8ffcc2ce1d4f9d3286922f6d1ac31ea; old Windows EXE 29,484,399 bytes. Existing primary/probe private identities and verified split-routing/DNS behavior are available for reuse.
-- Last evidence: run 39295123717 passes Linux/Windows tool/core/vet, render and full native packaged smoke. Both real file selection and picker-during-close behavior pass; GUI-only termination stops the engine/port before cleanup. Only the old-runtime all-process measurement is being corrected; privacy, current process-count and crash-proof checks are retained. Real saved-profile gate remains 58 requests/zero errors with no API/registration; master/rolling and user data/design/.venv are untouched.
-- Blocker: no external blocker. GitHub incident 8tzbpcnl75jp delays status updates, but jobs execute; actual logs expose actionable failures and determine the next correction.
-- Next: native all-process footprint comparison on the migration branch, then master/rolling delivery and final matching-EXE verification.
+- Last evidence: run 39296627544 is green for all required migration-branch jobs: Linux/Windows tool/core/vet, races, 21 rendered state/DPI frames, native packaged GUI/clipboard/import/picker/graceful and GUI-only crash proof, plus measured old/new footprint. The original exactly-three-process baseline assumption was disproved by four actual owned legacy processes; all are now counted. Real saved-profile gate remains 58 requests/zero errors with no API/registration. Runtime Python and Python delivery invocations are retired; user data/design/.venv remain untouched.
+- Blocker: none; no known local or native gate failure remains.
+- Next: master/rolling delivery and final matching-EXE verification.
 
 ## Material Decisions
 - 2026-10-19: latest user permits breaking changes and Python tests only; runtime/build/publication move to Go. Self-worker architecture preserves isolation without shipping helper executables. Smaller/lighter is measured, not assumed from language alone.
@@ -91,6 +91,7 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 - 2026-10-19: retire the old runtime only on the isolated migration branch after local Go parity; do not merge or replace the verified rolling EXE until the native Windows/core/GUI/lifecycle and footprint gates pass.
 - 2026-10-19: Windows checkout must preserve exact LF bytes of embedded, digest-pinned Go payloads; enforce this in .gitattributes, never by accepting a changed source hash. Native memory fixtures must acknowledge execution rather than equating ResumeThread with application readiness.
 - 2026-10-19: the smoke launcher detaches from consoles rather than hiding newly allocated consoles. This prevents test-only conhost.exe workers from contaminating exact owned-process/footprint proof; explicit NUL-only handles, suspended safety-job assignment and GUI-only termination remain unchanged.
+- 2026-10-19: footprint is measured honestly across every owned process. The Go EXE is smaller, but this sample uses slightly more RAM; report that result rather than inventing an improvement or filtering auxiliary legacy processes. Tk and Gio readiness exercises differ and are explicitly identified.
 
 ## Checkpoint History
 - 2026-10-19: approved plan copied here with the latest Python-tests-only amendment; implementation begins.
@@ -106,6 +107,7 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 - 2026-10-19: bounded stage history in run 39293630462 proves clipboard succeeds and isolates file selection. Replace the test's nonexistent-control assumption with documented control discovery and exact path readback; native repeat remains required.
 
 - 2026-10-19: run 39295123717 passes complete native GUI/clipboard/import/picker/graceful and GUI-only crash checks; R1/R3/R4 verified. Baseline measurement's three-process assumption is replaced with all stable owned job members plus required-identity/uniqueness/nonzero validation; native comparison and master delivery are next.
+- 2026-10-19: run 39296627544 also passes the complete all-owned-process comparison. Old/new EXE 29,484,399 / 18,237,952 bytes; working sets 91,340,800 / 96,002,048 bytes; results and limitations recorded in README. All migration-branch gates pass; only master publication remains.
 
 ## Completion
 - Pending required outcomes; no migration completion claim yet.
