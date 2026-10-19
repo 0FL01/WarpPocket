@@ -344,7 +344,7 @@ class WireproxyBuildTests(unittest.TestCase):
     def test_checked_in_pins_are_valid_and_pinned(self):
         pins = builder.load_pins()
         self.assertEqual(pins["schema_version"], 1)
-        self.assertEqual(pins["patch"], "reserved-support+ordered-dns")
+        self.assertEqual(pins["patch"], "reserved-support+ordered-dns+split-routing")
         self.assertEqual(pins["wireproxy"]["version"], "1.1.3")
         self.assertEqual(pins["wireproxy"]["url"],
                          "https://github.com/windtf/wireproxy/archive/refs/tags/v1.1.3.tar.gz")
@@ -395,32 +395,103 @@ class WireproxyBuildTests(unittest.TestCase):
                     builder.patch_wireguard_dns(self.root)
                 write.assert_not_called()
 
-    def test_dns_tests_run_in_nested_module_with_native_not_cross_target(self):
+    def test_routing_patch_rejects_invalid_anchors_before_writes(self):
+        for text in ("", builder.ROUTING_OPTIONS_OLD * 2, builder.ROUTING_OPTIONS_OLD[:50]):
+            with self.subTest(text_length=len(text)), \
+                    mock.patch.object(builder, "_read_text", return_value=text), \
+                    mock.patch.object(builder, "_write_text") as write:
+                with self.assertRaises(builder.BuildError):
+                    builder.patch_wireproxy_routing(self.root)
+                write.assert_not_called()
+
+    def test_routing_patch_validates_both_payloads_before_writes(self):
+        command = '\t"github.com/landlock-lsm/go-landlock/landlock"\n' + builder.ROUTING_NETWORK_OLD
+        with mock.patch.object(builder, "_read_text", side_effect=[
+                builder.ROUTING_OPTIONS_OLD, command, "routing-payload", builder.BuildError("missing tests")]), \
+                mock.patch.object(builder, "_write_text") as write:
+            with self.assertRaises(builder.BuildError):
+                builder.patch_wireproxy_routing(self.root)
+            write.assert_not_called()
+
+    def test_routing_sandbox_anchor_and_test_payload_are_validated_before_writes(self):
+        command = '\t"github.com/landlock-lsm/go-landlock/landlock"\n' + builder.ROUTING_NETWORK_OLD
+        for text in ("", command + builder.ROUTING_NETWORK_OLD, builder.ROUTING_NETWORK_OLD):
+            with self.subTest(command_length=len(text)), \
+                    mock.patch.object(builder, "_read_text", side_effect=[builder.ROUTING_OPTIONS_OLD, text]), \
+                    mock.patch.object(builder, "_write_text") as write:
+                with self.assertRaises(builder.BuildError):
+                    builder.patch_wireproxy_routing(self.root)
+                write.assert_not_called()
+        with mock.patch.object(builder, "_read_text", side_effect=[
+                builder.ROUTING_OPTIONS_OLD, command, "router", "router tests", builder.BuildError("missing sandbox tests")]), \
+                mock.patch.object(builder, "_write_text") as write:
+            with self.assertRaises(builder.BuildError):
+                builder.patch_wireproxy_routing(self.root)
+            write.assert_not_called()
+
+    def test_routing_patch_installs_the_same_options_and_native_test_payload(self):
+        (self.root / "routine.go").write_text(builder.ROUTING_OPTIONS_OLD, encoding="utf-8")
+        command = self.root / "cmd" / "wireproxy" / "main.go"
+        command.parent.mkdir(parents=True)
+        command.write_text('\t"github.com/landlock-lsm/go-landlock/landlock"\n' + builder.ROUTING_NETWORK_OLD,
+                           encoding="utf-8")
+        builder.patch_wireproxy_routing(self.root)
+        self.assertEqual((self.root / "routine.go").read_text("utf-8"), builder.ROUTING_OPTIONS_NEW)
+        self.assertEqual((self.root / "warppocket_routing.go").read_text("utf-8"),
+                         (ROOT / "scripts" / "wireproxy_routing.go").read_text("utf-8"))
+        self.assertEqual((self.root / "warppocket_routing_test.go").read_text("utf-8"),
+                          (ROOT / "tests" / "wireproxy_routing_test.go").read_text("utf-8"))
+        self.assertIn(builder.ROUTING_NETWORK_NEW, command.read_text("utf-8"))
+        self.assertIn('landlocksyscall "github.com/landlock-lsm/go-landlock/landlock/syscall"',
+                      command.read_text("utf-8"))
+        self.assertEqual((command.parent / "warppocket_sandbox_test.go").read_text("utf-8"),
+                          (ROOT / "tests" / "wireproxy_sandbox_test.go").read_text("utf-8"))
+
+    def test_both_policy_gates_run_in_correct_modules_with_native_not_cross_target(self):
         host = mock.Mock(stdout="linux\namd64\n")
         tested = mock.Mock(stdout="PASS\n")
         with mock.patch.dict(builder.os.environ, {"GOOS": "windows", "GOARCH": "arm64"}), \
-                mock.patch.object(builder, "run_go", side_effect=[host, tested]) as run, \
+                mock.patch.object(builder, "run_go", side_effect=[host, tested, tested]) as run, \
                 mock.patch("sys.stderr", new_callable=io.StringIO):
-            builder.test_dns_policy(self.root)
-        self.assertEqual(run.call_count, 2)
+            builder.test_helper_policies(self.root)
+        self.assertEqual(run.call_count, 3)
         native = run.call_args_list[1].args
         self.assertEqual(native[0], ["go", "test", "./tun/netstack", "-run", "^TestWarpPocketDNS", "-count=1", "-v"])
         self.assertEqual(native[1], self.root / "wireguard-go")
         self.assertEqual((native[2]["GOOS"], native[2]["GOARCH"]), ("linux", "amd64"))
         self.assertEqual(native[2]["CGO_ENABLED"], "0")
+        routing = run.call_args_list[2].args
+        self.assertEqual(routing[0], ["go", "test", ".", "./cmd/wireproxy", "-run", "^TestWarpPocketRouting", "-count=1", "-v"])
+        self.assertEqual(routing[1], self.root)
+        self.assertEqual(routing[2], native[2])
 
-    def test_failed_native_dns_gate_prevents_cross_build_and_publication(self):
+    def test_either_policy_gate_failure_is_not_suppressed(self):
+        host = mock.Mock(stdout="linux\namd64\n")
+        for gate in ("DNS", "routing"):
+            effects = [host]
+            if gate == "routing":
+                effects.append(mock.Mock(stdout="DNS PASS\n"))
+            effects.append(builder.BuildError(gate + " gate failed"))
+            with self.subTest(gate=gate), \
+                    mock.patch.object(builder, "run_go", side_effect=effects) as run, \
+                    mock.patch("sys.stderr", new_callable=io.StringIO):
+                with self.assertRaises(builder.BuildError):
+                    builder.test_helper_policies(self.root)
+                self.assertEqual(run.call_count, len(effects))
+
+    def test_failed_native_policy_gate_prevents_cross_build_and_publication(self):
         replacements = {
             "load_pins": mock.Mock(return_value=builder.load_pins()),
             "download_source": mock.Mock(return_value=b"verified-source"),
             "extract_source": mock.Mock(return_value=self.root),
             "patch_wireproxy": mock.Mock(),
+            "patch_wireproxy_routing": mock.Mock(),
             "download_wireguard_module": mock.Mock(return_value=self.root / "cache"),
             "copy_wireguard_module": mock.Mock(),
             "patch_wireguard_conn": mock.Mock(),
             "patch_wireguard_dns": mock.Mock(),
             "patch_go_mod": mock.Mock(),
-            "test_dns_policy": mock.Mock(side_effect=builder.BuildError("native DNS gate failed")),
+            "test_helper_policies": mock.Mock(side_effect=builder.BuildError("native policy gate failed")),
             "build_target": mock.Mock(),
             "remove_tree": mock.Mock(),
         }
@@ -430,8 +501,9 @@ class WireproxyBuildTests(unittest.TestCase):
                 mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
             result = builder.main(["--platform", "windows-amd64", "--out-root", str(self.root)])
         self.assertEqual(result, 1)
-        self.assertIn("native DNS gate failed", stderr.getvalue())
+        self.assertIn("native policy gate failed", stderr.getvalue())
         self.assertEqual(stdout.getvalue(), "")
+        replacements["test_helper_policies"].assert_called_once_with(self.root)
         replacements["build_target"].assert_not_called()
         replacements["remove_tree"].assert_called_once_with(self.root)
 

@@ -15,7 +15,7 @@ import (
 
 const (
 	warpDNSStageTimeout  = time.Second
-	warpDNSLookupTimeout = 3 * time.Second
+	warpDNSLookupTimeout = 5 * time.Second
 )
 
 // The dependency is per call, never a mutable process-wide test hook. In

@@ -33,7 +33,7 @@ class HealthcheckTests(unittest.TestCase):
         for call in session.get.call_args_list:
             self.assertFalse(call.kwargs["allow_redirects"])
             self.assertTrue(call.kwargs["verify"])
-            self.assertEqual(call.kwargs["timeout"], (5, 5))
+            self.assertEqual(call.kwargs["timeout"], (7, 5))
         self.assertEqual(session.mount.call_args.args[1].max_retries.total, 0)
         trace.__exit__.assert_called_once()
         independent.__exit__.assert_called_once()

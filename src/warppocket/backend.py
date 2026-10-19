@@ -14,7 +14,7 @@ from warppocket.profiles import render_profile
 from warppocket.process_manager import ProcessCancelled
 from warppocket.storage import AppPaths, atomic_write
 
-RUNTIME_DNS = ("83.220.169.155", "212.109.195.93", "9.9.9.9")
+RUNTIME_DNS = ("83.220.169.155", "212.109.195.93", "194.87.196.13", "45.151.102.219", "9.9.9.9")
 
 
 def bundled_root() -> Path:

@@ -23,7 +23,7 @@ def check_proxy(port: int, *, cancel: threading.Event | None = None) -> float:
             raise AppError("cancelled", "Операция отменена.")
         if time.monotonic() >= deadline:
             raise AppError("health_timeout", "Время проверки истекло.")
-        with session.get(url, timeout=(5, 5), allow_redirects=False, stream=True, verify=True) as response:
+        with session.get(url, timeout=(7, 5), allow_redirects=False, stream=True, verify=True) as response:
             content = bytearray()
             # A one-byte stream also bounds slow-drip responses by the wall deadline.
             for chunk in response.iter_content(chunk_size=1):

@@ -93,6 +93,17 @@ class UiTests(unittest.TestCase):
         self.assertEqual(app._connect.cget("text"), "Подключиться")
         self.assertEqual(app._search.cget("text"), "Найти новую стратегию")
 
+        def labels(widget):
+            for child in widget.winfo_children():
+                if child.winfo_class() == "TLabel":
+                    yield child
+                yield from labels(child)
+
+        hints = [label for label in labels(self.root)
+                 if label.cget("text") == "RU/РФ/SU и VK — напрямую; остальное — WARP"]
+        self.assertEqual(len(hints), 1)
+        self.assertEqual(hints[0].cget("style"), "Hint.TLabel")
+
     def test_connect_requires_consent_then_retries_with_it(self):
         controller = FakeController()
         app = self.make(controller, confirm=lambda title, text: True)

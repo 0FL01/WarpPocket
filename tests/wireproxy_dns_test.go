@@ -22,6 +22,8 @@ func warpDNSTestNet() *Net {
 		dnsServers: []netip.Addr{
 			netip.MustParseAddr("83.220.169.155"),
 			netip.MustParseAddr("212.109.195.93"),
+			netip.MustParseAddr("194.87.196.13"),
+			netip.MustParseAddr("45.151.102.219"),
 			netip.MustParseAddr("9.9.9.9"),
 		},
 		hasV4: true,
@@ -78,20 +80,23 @@ func warpDNSTestAnswer(q dnsmessage.Question, code dnsmessage.RCode, address boo
 func TestWarpPocketDNSOrderedFailover(t *testing.T) {
 	cases := []struct {
 		name   string
-		modes  [3]string
+		modes  [5]string
 		stages []int
 		found  bool
 		absent bool
 	}{
-		{"first-primary", [3]string{"answer"}, []int{0}, true, false},
-		{"second-primary", [3]string{"transport", "answer"}, []int{0, 1}, true, false},
-		{"fallback", [3]string{"transport", "transport", "answer"}, []int{0, 1, 2}, true, false},
-		{"all-failed", [3]string{"transport", "transport", "transport"}, []int{0, 1, 2}, false, false},
-		{"nxdomain", [3]string{"nxdomain"}, []int{0}, false, true},
-		{"nodata", [3]string{"nodata"}, []int{0}, false, true},
-		{"second-negative", [3]string{"transport", "nxdomain"}, []int{0, 1}, false, true},
-		{"servfail-refused", [3]string{"servfail", "refused", "answer"}, []int{0, 1, 2}, true, false},
-		{"malformed", [3]string{"malformed", "answer"}, []int{0, 1}, true, false},
+		{"first-primary", [5]string{"answer"}, []int{0}, true, false},
+		{"second-primary", [5]string{"transport", "answer"}, []int{0, 1}, true, false},
+		{"third-primary", [5]string{"transport", "transport", "answer"}, []int{0, 1, 2}, true, false},
+		{"fourth-primary", [5]string{"transport", "transport", "transport", "answer"}, []int{0, 1, 2, 3}, true, false},
+		{"quad9-after-four-failures", [5]string{"transport", "transport", "transport", "transport", "answer"}, []int{0, 1, 2, 3, 4}, true, false},
+		{"all-five-failed", [5]string{"transport", "transport", "transport", "transport", "transport"}, []int{0, 1, 2, 3, 4}, false, false},
+		{"nxdomain", [5]string{"nxdomain"}, []int{0}, false, true},
+		{"nodata", [5]string{"nodata"}, []int{0}, false, true},
+		{"second-negative", [5]string{"transport", "nxdomain"}, []int{0, 1}, false, true},
+		{"fourth-negative", [5]string{"transport", "transport", "transport", "nxdomain"}, []int{0, 1, 2, 3}, false, true},
+		{"servfail-refused", [5]string{"servfail", "refused", "answer"}, []int{0, 1, 2}, true, false},
+		{"malformed", [5]string{"malformed", "answer"}, []int{0, 1}, true, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -107,10 +112,10 @@ func TestWarpPocketDNSOrderedFailover(t *testing.T) {
 					}
 				}
 				if stage < 0 {
-					return dnsmessage.Parser{}, dnsmessage.Header{}, errors.New("unexpected fourth DNS server")
+					return dnsmessage.Parser{}, dnsmessage.Header{}, errors.New("unexpected DNS server outside the five-server chain")
 				}
 				deadline, ok := ctx.Deadline()
-				if !ok || time.Until(deadline) > warpDNSStageTimeout {
+				if !ok || time.Until(deadline) > time.Second || timeout != time.Second {
 					t.Error("DNS exchange is missing the one-second stage bound")
 				}
 				mu.Lock()
@@ -256,19 +261,55 @@ func TestWarpPocketDNSCancellationAndInputGuards(t *testing.T) {
 }
 
 func TestWarpPocketDNSLookupDeadline(t *testing.T) {
-	tnet := warpDNSTestNet()
-	exchange := func(ctx context.Context, server netip.Addr, q dnsmessage.Question, timeout time.Duration) (dnsmessage.Parser, dnsmessage.Header, error) {
-		<-ctx.Done()
-		return dnsmessage.Parser{}, dnsmessage.Header{}, ctx.Err()
+	if warpDNSStageTimeout != time.Second || warpDNSLookupTimeout != 5*time.Second {
+		t.Fatal("DNS must retain one-second stages and a five-second overall budget")
 	}
-	start := time.Now()
-	addrs, err := tnet.lookupOrderedDNS(context.Background(), "example.test", exchange)
-	var dnsErr *net.DNSError
-	if len(addrs) != 0 || !errors.As(err, &dnsErr) || !dnsErr.IsTimeout {
-		t.Fatalf("expected lookup deadline, got %v, %v", addrs, err)
-	}
-	if elapsed := time.Since(start); elapsed > warpDNSLookupTimeout+time.Second {
-		t.Fatalf("DNS lookup exceeded its three-second budget: %v", elapsed)
+	for _, outcome := range []string{"fifth-answers", "all-timeout"} {
+		t.Run(outcome, func(t *testing.T) {
+			tnet := warpDNSTestNet()
+			var mu sync.Mutex
+			var stages []netip.Addr
+			exchange := func(ctx context.Context, server netip.Addr, q dnsmessage.Question, timeout time.Duration) (dnsmessage.Parser, dnsmessage.Header, error) {
+				deadline, ok := ctx.Deadline()
+				if !ok || ctx.Err() != nil || time.Until(deadline) <= 0 || time.Until(deadline) > time.Second || timeout != time.Second {
+					t.Error("DNS server was not attempted within its active one-second stage")
+				}
+				mu.Lock()
+				stages = append(stages, server)
+				mu.Unlock()
+				if outcome == "fifth-answers" && server == tnet.dnsServers[4] {
+					return warpDNSTestAnswer(q, dnsmessage.RCodeSuccess, true)
+				}
+				// Consume the actual stage budget, without network I/O, so the
+				// fifth resolver must still get a live stage after four timeouts.
+				<-ctx.Done()
+				return dnsmessage.Parser{}, dnsmessage.Header{}, ctx.Err()
+			}
+			start := time.Now()
+			addrs, err := tnet.lookupOrderedDNS(context.Background(), "example.test", exchange)
+			elapsed := time.Since(start)
+			minimum := 4 * time.Second
+			if outcome == "fifth-answers" {
+				if err != nil || !reflect.DeepEqual(addrs, []string{"192.0.2.7"}) {
+					t.Fatalf("fifth resolver could not answer after four full timeouts: %v, %v", addrs, err)
+				}
+			} else {
+				minimum = 5 * time.Second
+				var dnsErr *net.DNSError
+				if len(addrs) != 0 || !errors.As(err, &dnsErr) || !dnsErr.IsTimeout {
+					t.Fatalf("expected lookup deadline, got %v, %v", addrs, err)
+				}
+			}
+			mu.Lock()
+			attempted := append([]netip.Addr(nil), stages...)
+			mu.Unlock()
+			if !reflect.DeepEqual(attempted, tnet.dnsServers) {
+				t.Fatalf("deadline path did not attempt all five resolvers in order: %v", attempted)
+			}
+			if elapsed < minimum || elapsed > 6*time.Second {
+				t.Fatalf("DNS lookup did not respect its five-second budget (allowing scheduling overhead): %v", elapsed)
+			}
+		})
 	}
 }
 

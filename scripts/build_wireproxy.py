@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build pinned wireproxy with WARP reserved support and ordered tunneled DNS.
+"""Build pinned wireproxy with WARP reserved support, DNS and SOCKS split routing.
 
 Usage: python scripts/build_wireproxy.py --platform linux-amd64
        python scripts/build_wireproxy.py --platform windows-amd64
@@ -11,9 +11,9 @@ archive that is downloaded over verified TLS and checked against a pinned
 SHA-256 before anything is patched. wireproxy learns a Reserved key for its
 [Peer] sections, and a patched copy of the pinned golang.zx2c4.com/wireguard
 module injects those bytes for the configured endpoint and masks the mirrored
-bytes in responses. A lookup-wide DNS policy bounds failover and cancellation;
-its native Go tests run before cross-compilation. Failures never leave a partial
-vendor binary behind.
+bytes in responses. Lookup-wide DNS and hardcoded SOCKS routing policies are
+tested natively before cross-compilation. Failures never leave a partial vendor
+binary behind.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ TARGETS = {
 WIREPROXY_REPOSITORY = "windtf/wireproxy"
 WIREGUARD_MODULE = "golang.zx2c4.com/wireguard"
 WIREGUARD_REPLACE = "replace golang.zx2c4.com/wireguard => ./wireguard-go"
-SUPPORTED_PATCH = "reserved-support+ordered-dns"
+SUPPORTED_PATCH = "reserved-support+ordered-dns+split-routing"
 MAX_SOURCE_BYTES = 20 * 1024 * 1024
 CHUNK_BYTES = 64 * 1024
 SOCKET_TIMEOUT = 120.0
@@ -298,6 +298,110 @@ def patch_wireproxy(src: Path) -> None:
     wireguard = replace_once(wireguard, WIREGUARD_BIND_OLD, WIREGUARD_BIND_NEW,
                              "wireguard.go bind")
     _write_text(src / "wireguard.go", wireguard)
+
+
+ROUTING_OPTIONS_OLD = '''	options := []socks5.Option{
+		socks5.WithDial(vt.Tnet.DialContext),
+		socks5.WithResolver(vt),
+		socks5.WithAuthMethods(authMethods),
+		socks5.WithBufferPool(bufferpool.NewPool(256 * 1024)),
+	}
+'''
+
+ROUTING_OPTIONS_NEW = '''	options := newWarpPocketSOCKSRouter(vt).options()
+	options = append(options,
+		socks5.WithAuthMethods(authMethods),
+		socks5.WithBufferPool(bufferpool.NewPool(256 * 1024)),
+	)
+'''
+
+ROUTING_NETWORK_OLD = '''func lockNetwork(sections []wireproxy.RoutineSpawner, infoAddr *string) {
+	var rules []landlock.Rule
+	if infoAddr != nil && *infoAddr != "" {
+		rules = append(rules, landlock.BindTCP(extractPort(*infoAddr)))
+	}
+
+	for _, section := range sections {
+		switch section := section.(type) {
+		case *wireproxy.TCPServerTunnelConfig:
+			rules = append(rules, landlock.ConnectTCP(extractPort(section.Target)))
+		case *wireproxy.HTTPConfig:
+			rules = append(rules, landlock.BindTCP(extractPort(section.BindAddress)))
+		case *wireproxy.TCPClientTunnelConfig:
+			rules = append(rules, landlock.ConnectTCP(uint16(section.BindAddress.Port)))
+		case *wireproxy.Socks5Config:
+			rules = append(rules, landlock.BindTCP(extractPort(section.BindAddress)))
+		case *wireproxy.SNIConfig:
+			rules = append(rules, landlock.BindTCP(extractPort(section.BindAddress)))
+		}
+	}
+
+	panicIfError(landlock.V4.BestEffort().RestrictNet(rules...))
+}
+'''
+
+ROUTING_NETWORK_NEW = '''func warpPocketNetworkPolicy(sections []wireproxy.RoutineSpawner, infoAddr *string) (landlock.Config, []landlock.Rule) {
+	var rules, bindRules []landlock.Rule
+	allowDirect := false
+	allowBind := func(port uint16) {
+		rule := landlock.BindTCP(port)
+		rules = append(rules, rule)
+		bindRules = append(bindRules, rule)
+	}
+	if infoAddr != nil && *infoAddr != "" {
+		allowBind(extractPort(*infoAddr))
+	}
+	for _, section := range sections {
+		switch section := section.(type) {
+		case *wireproxy.TCPServerTunnelConfig:
+			rules = append(rules, landlock.ConnectTCP(extractPort(section.Target)))
+		case *wireproxy.HTTPConfig:
+			allowBind(extractPort(section.BindAddress))
+		case *wireproxy.TCPClientTunnelConfig:
+			rules = append(rules, landlock.ConnectTCP(uint16(section.BindAddress.Port)))
+		case *wireproxy.Socks5Config:
+			allowBind(extractPort(section.BindAddress))
+			allowDirect = true
+		case *wireproxy.SNIConfig:
+			allowBind(extractPort(section.BindAddress))
+		}
+	}
+	if allowDirect {
+		// DIRECT needs outbound TCP on arbitrary destination ports. Landlock
+		// cannot express hostname/public-IP rules: the checked SOCKS router
+		// owns those decisions. Keep the bind allowlist and filesystem locks.
+		return landlock.MustConfig(landlock.AccessNetSet(landlocksyscall.AccessNetBindTCP)).BestEffort(), bindRules
+	}
+	return landlock.V4.BestEffort(), rules
+}
+
+func lockNetwork(sections []wireproxy.RoutineSpawner, infoAddr *string) {
+	policy, rules := warpPocketNetworkPolicy(sections, infoAddr)
+	panicIfError(policy.RestrictNet(rules...))
+}
+'''
+
+
+def patch_wireproxy_routing(src: Path) -> None:
+    """Install only the pinned SOCKS hooks, keeping protocol/auth handling upstream."""
+    routine = replace_once(_read_text(src / "routine.go"), ROUTING_OPTIONS_OLD,
+                           ROUTING_OPTIONS_NEW, "routine.go SOCKS routing options")
+    main_path = src / "cmd" / "wireproxy" / "main.go"
+    command = replace_once(_read_text(main_path), ROUTING_NETWORK_OLD,
+                           ROUTING_NETWORK_NEW, "main.go DIRECT network sandbox")
+    command = replace_once(command, '\t"github.com/landlock-lsm/go-landlock/landlock"\n',
+                           '\t"github.com/landlock-lsm/go-landlock/landlock"\n'
+                           '\tlandlocksyscall "github.com/landlock-lsm/go-landlock/landlock/syscall"\n',
+                           "main.go Landlock access flags")
+    payload = _read_text(ROOT / "scripts" / "wireproxy_routing.go")
+    tests = _read_text(ROOT / "tests" / "wireproxy_routing_test.go")
+    sandbox_tests = _read_text(ROOT / "tests" / "wireproxy_sandbox_test.go")
+    # Validate every anchor and payload before modifying this isolated source.
+    _write_text(src / "routine.go", routine)
+    _write_text(main_path, command)
+    _write_text(src / "warppocket_routing.go", payload)
+    _write_text(src / "warppocket_routing_test.go", tests)
+    _write_text(src / "cmd" / "wireproxy" / "warppocket_sandbox_test.go", sandbox_tests)
 
 
 # --- pinned netstack anchors; DNS parsing and tunnel dialers remain upstream ---
@@ -767,8 +871,8 @@ def build_target(src: Path, platform: str, out_root: Path) -> Path:
     return output
 
 
-def test_dns_policy(src: Path) -> None:
-    """Run the patched nested module's tests natively, even for a cross build."""
+def test_helper_policies(src: Path) -> None:
+    """Test both patched modules natively, even when the output is cross built."""
     environment = {**os.environ, "GOFLAGS": "-mod=mod", "CGO_ENABLED": "0"}
     result = run_go(["go", "env", "GOHOSTOS", "GOHOSTARCH"], src, environment, 30, "go env host")
     host = result.stdout.split()
@@ -778,6 +882,11 @@ def test_dns_policy(src: Path) -> None:
     result = run_go(
         ["go", "test", "./tun/netstack", "-run", "^TestWarpPocketDNS", "-count=1", "-v"],
         src / "wireguard-go", environment, TEST_TIMEOUT, "native DNS tests",
+    )
+    print(result.stdout, file=sys.stderr, end="")
+    result = run_go(
+        ["go", "test", ".", "./cmd/wireproxy", "-run", "^TestWarpPocketRouting", "-count=1", "-v"],
+        src, environment, TEST_TIMEOUT, "native routing tests",
     )
     print(result.stdout, file=sys.stderr, end="")
 
@@ -798,12 +907,13 @@ def main(argv: list[str] | None = None) -> int:
             raise BuildError("The Go toolchain is not installed or not on PATH")
         source = extract_source(download_source(pins), pins["wireproxy"]["version"])
         patch_wireproxy(source)
+        patch_wireproxy_routing(source)
         module = download_wireguard_module(source, pins)
         copy_wireguard_module(module, source / "wireguard-go")
         patch_wireguard_conn(source / "wireguard-go")
         patch_wireguard_dns(source / "wireguard-go")
         patch_go_mod(source)
-        test_dns_policy(source)
+        test_helper_policies(source)
         for platform in platforms:
             built.append(build_target(source, platform, out_root))
     except (BuildError, OSError) as exc:

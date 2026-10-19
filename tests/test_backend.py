@@ -47,9 +47,10 @@ class BackendTests(unittest.TestCase):
                     try:
                         config = instance.config.read_text(encoding="utf-8")
                         self.assertEqual([line for line in config.splitlines() if line.startswith("DNS =")],
-                                         ["DNS = 83.220.169.155, 212.109.195.93, 9.9.9.9"])
+                                         ["DNS = 83.220.169.155, 212.109.195.93, 194.87.196.13, 45.151.102.219, 9.9.9.9"])
                         runtime = parse_profile(config.split("\n[Socks5]\n", 1)[0])
-                        self.assertEqual(runtime, replace(original, dns=("83.220.169.155", "212.109.195.93", "9.9.9.9"),
+                        self.assertEqual(runtime, replace(original, dns=("83.220.169.155", "212.109.195.93", "194.87.196.13",
+                                                                        "45.151.102.219", "9.9.9.9"),
                                                           endpoint=endpoint))
                         self.assertEqual(profile, original)
                         self.assertEqual(persisted.read_bytes(), original_content)
@@ -131,7 +132,7 @@ class BackendTests(unittest.TestCase):
                         config = instance.config.read_text(encoding="utf-8")
                         self.assertIn("ResolveStrategy = ipv4", config)
                         self.assertEqual([line for line in config.splitlines() if line.startswith("DNS =")],
-                                         ["DNS = 83.220.169.155, 212.109.195.93, 9.9.9.9"])
+                                         ["DNS = 83.220.169.155, 212.109.195.93, 194.87.196.13, 45.151.102.219, 9.9.9.9"])
                         self.assertIn("Reserved = 7, 8, 9", config)
                         self.assertEqual(profile.dns, ("1.1.1.1",))
                         self.assertEqual(render_profile(profile), original_content)

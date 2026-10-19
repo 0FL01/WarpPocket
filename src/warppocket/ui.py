@@ -95,6 +95,8 @@ class WarpPocketApp:
         entry.pack(side="left", fill="x", expand=True, ipady=6)
         self._copy = ttk.Button(row, text="Копировать", command=self._on_copy)
         self._copy.pack(side="left", padx=(8, 0))
+        ttk.Label(socks, text="RU/РФ/SU и VK — напрямую; остальное — WARP",
+                  style="Hint.TLabel").pack(anchor="w", pady=(6, 0))
 
         self._connect = ttk.Button(frame, text="Подключиться", command=self._on_connect)
         self._connect.pack(fill="x", pady=(14, 4), ipady=8)
