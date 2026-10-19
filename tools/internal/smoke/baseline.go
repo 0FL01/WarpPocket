@@ -162,23 +162,12 @@ func CompareBaseline(ctx context.Context, currentSummary, output string) (compar
 		return comparison, failure("baseline_identity")
 	}
 	processes, err := launch.WorkingSets()
-	if err != nil || len(processes) != 3 {
-		return comparison, failure("baseline_working_set")
+	if err != nil {
+		return comparison, failure("baseline_" + safeCode(err))
 	}
-	measurement := Footprint{StartToReadyMS: float64(time.Since(start).Microseconds()) / 1000, Processes: processes}
-	for i := range measurement.Processes {
-		p := &measurement.Processes[i]
-		measurement.OwnedWorkingSetBytes += p.WorkingSetBytes
-		switch p.PID {
-		case pid:
-			p.Role = "gui"
-		case child:
-			p.Role = "engine"
-		case launch.GUI().PID():
-			p.Role = "onefile_launcher"
-		default:
-			return comparison, failure("baseline_not_owned")
-		}
+	measurement, err := baselineFootprint(processes, pid, child, launch.GUI().PID(), time.Since(start))
+	if err != nil {
+		return comparison, err
 	}
 	if err := closeBaselineWindow(pid); err != nil {
 		return comparison, err
@@ -200,4 +189,36 @@ func CompareBaseline(ctx context.Context, currentSummary, output string) (compar
 		return comparison, failure("baseline_output")
 	}
 	return comparison, nil
+}
+
+func baselineFootprint(processes []ProcessMemory, gui, engine, launcher int, elapsed time.Duration) (Footprint, error) {
+	if gui <= 0 || engine <= 0 || launcher <= 0 || gui == engine || gui == launcher || engine == launcher {
+		return Footprint{}, failure("baseline_working_set")
+	}
+	// WorkingSets verifies membership/liveness for every PID and takes a stable
+	// snapshot of the entire owned job. A legacy console helper may also own a
+	// conhost process: include its memory instead of assuming exactly three or
+	// excluding auxiliary processes from the comparison. The new application's
+	// separate exact GUI+engine crash proof is deliberately unchanged.
+	want := map[int]string{gui: "gui", engine: "engine", launcher: "onefile_launcher"}
+	seen := make(map[int]bool, len(processes))
+	measurement := Footprint{StartToReadyMS: float64(elapsed.Microseconds()) / 1000, Processes: append([]ProcessMemory(nil), processes...)}
+	for i := range measurement.Processes {
+		p := &measurement.Processes[i]
+		if p.PID <= 0 || seen[p.PID] || p.WorkingSetBytes == 0 || ^uint64(0)-measurement.OwnedWorkingSetBytes < p.WorkingSetBytes {
+			return Footprint{}, failure("baseline_working_set")
+		}
+		seen[p.PID] = true
+		measurement.OwnedWorkingSetBytes += p.WorkingSetBytes
+		p.Role = want[p.PID]
+		if p.Role == "" {
+			p.Role = "runtime_auxiliary"
+		}
+	}
+	for pid := range want {
+		if !seen[pid] {
+			return Footprint{}, failure("baseline_working_set")
+		}
+	}
+	return measurement, nil
 }
