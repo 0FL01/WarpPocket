@@ -181,6 +181,11 @@ func (v *View) button(gtx layout.Context, button *widget.Clickable, text string,
 		b.Background = rgb(0xf3f6fb)
 	}
 	line := border
+	if !enabled {
+		b.Color = muted
+		b.Background = rgb(0xf5f5f5)
+		line = rgb(0xd9dde5)
+	}
 	if gtx.Focused(button) {
 		line = blue
 	}
@@ -246,18 +251,15 @@ func (v *View) Layout(gtx layout.Context) layout.Dimensions {
 	if v.consent != "" || v.info != "" {
 		base = gtx.Disabled()
 	}
-	return layout.Stack{}.Layout(gtx,
-		layout.Expanded(func(_ layout.Context) layout.Dimensions { return v.mainLayout(base) }),
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			if v.consent != "" || v.info != "" {
-				return v.modal(gtx)
-			}
-			if v.menuOpen {
-				return v.menuLayout(gtx)
-			}
-			return layout.Dimensions{}
-		}),
-	)
+	children := []layout.StackChild{layout.Expanded(func(_ layout.Context) layout.Dimensions { return v.mainLayout(base) })}
+	if v.consent != "" || v.info != "" {
+		// An expanded overlay provides the full window's minimum constraints:
+		// Center then positions the modal, instead of measuring it at (0,0).
+		children = append(children, layout.Expanded(v.modal))
+	} else if v.menuOpen {
+		children = append(children, layout.Stacked(v.menuLayout))
+	}
+	return layout.Stack{}.Layout(gtx, children...)
 }
 
 func (v *View) mainLayout(gtx layout.Context) layout.Dimensions {
@@ -279,7 +281,7 @@ func (v *View) mainLayout(gtx layout.Context) layout.Dimensions {
 					b.Color = ink
 					b.Background = rgb(0xfafafa)
 					b.Inset = layout.UniformInset(5)
-					return b.Layout(gtx)
+					return layout.W.Layout(gtx, b.Layout)
 				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -362,12 +364,15 @@ func (v *View) progress(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(v.label(13, head, ink, false)), gap(8), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				width, height := gtx.Constraints.Max.X, gtx.Dp(10)
 				paint.FillShape(gtx.Ops, rgb(0xf3f6fb), clip.Rect{Max: image.Pt(width, height)}.Op())
-				fill := width / 4
+				start, fill := 0, width/4
 				if v.state.Searching && v.limit > 0 {
 					fill = width * min(v.completed, v.limit) / v.limit
+				} else if width > 0 {
+					// Indeterminate activity, not a fabricated percentage or count.
+					start = int(gtx.Now.UnixMilli()%2000)*(width+fill)/2000 - fill
 				}
-				for x := 0; x < fill; x += gtx.Dp(16) {
-					paint.FillShape(gtx.Ops, yellow, clip.Rect{Min: image.Pt(x, 0), Max: image.Pt(min(x+gtx.Dp(10), fill), height)}.Op())
+				for x := max(0, start); x < min(width, start+fill); x += max(1, gtx.Dp(16)) {
+					paint.FillShape(gtx.Ops, yellow, clip.Rect{Min: image.Pt(x, 0), Max: image.Pt(min(x+gtx.Dp(10), width, start+fill), height)}.Op())
 				}
 				return layout.Dimensions{Size: image.Pt(width, height)}
 			}), gap(7), layout.Rigid(v.label(12, v.progressEndpoint, muted, false)))

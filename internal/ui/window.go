@@ -17,12 +17,15 @@ import (
 type FrameInfo struct {
 	Count, Width, Height int
 	PxPerDp              float32
+	NativeChecks         bool
 }
 type Options struct {
 	Title       string
 	Diagnostics func() string
 	Licenses    string
 	Import      func(data []byte, role string) error
+	// Explicit offline-smoke probes, never enabled for normal user windows.
+	NativeChecks, CloseWithPicker bool
 	// OnFrame runs in the event loop AFTER a real native frame submission.
 	// Returning true requests the same asynchronous close as the OS close action.
 	OnFrame func(FrameInfo) bool
@@ -42,6 +45,11 @@ func Run(controller Controller, options Options) error {
 	w.Option(app.Title(title), app.Size(442, 620), app.MinSize(380, 420))
 	v := NewView(controller, options.Diagnostics, options.Licenses)
 	expl := explorer.NewExplorer(w)
+	var probe *nativeProbe
+	if options.NativeChecks {
+		probe = newNativeProbe(options.CloseWithPicker)
+		defer probe.cancel()
+	}
 	results := make(chan dialogResult, 1)
 	closed := make(chan struct{})
 	stopTick := make(chan struct{})
@@ -76,6 +84,9 @@ func Run(controller Controller, options Options) error {
 		switch event := e.(type) {
 		case *app.ClosingEvent:
 			startClose()
+			if probe != nil {
+				probe.closing(v.dialogBusy)
+			}
 			select {
 			case <-closed:
 				if v.dialogBusy {
@@ -86,11 +97,17 @@ func Run(controller Controller, options Options) error {
 			}
 		case app.DestroyEvent:
 			controller.Close()
+			if probe != nil && probe.err != nil {
+				return probe.err
+			}
 			return event.Err
 		case app.FrameEvent:
 			select {
 			case result := <-results:
 				v.dialogBusy = false
+				if probe != nil {
+					probe.pickerCancelled = errors.Is(result.err, explorer.ErrUserDecline)
+				}
 				if !v.closing {
 					if result.err != nil {
 						if !errors.Is(result.err, explorer.ErrUserDecline) {
@@ -110,16 +127,29 @@ func Run(controller Controller, options Options) error {
 			}
 			v.Update()
 			gtx := app.NewContext(&ops, event)
+			if probe != nil {
+				probe.frame(gtx, v)
+			}
 			v.Layout(gtx)
 			event.Frame(gtx.Ops)
 			frames++
-			if options.OnFrame != nil && options.OnFrame(FrameInfo{frames, event.Size.X, event.Size.Y, event.Metric.PxPerDp}) {
+			if options.OnFrame != nil && options.OnFrame(FrameInfo{Count: frames, Width: event.Size.X, Height: event.Size.Y, PxPerDp: event.Metric.PxPerDp, NativeChecks: probe != nil && probe.ready()}) {
 				startClose()
+			}
+			if probe != nil && probe.err != nil {
+				startClose()
+			}
+			if probe != nil && probe.pickerSeen && probe.closeWithPicker && !probe.closeSent {
+				probe.closeSent = true
+				w.Perform(system.ActionClose)
 			}
 			if v.importRequest != "" && !v.dialogBusy && !v.closing {
 				role := v.importRequest
 				v.importRequest = ""
 				v.dialogBusy = true
+				if probe != nil {
+					probe.startPicker()
+				}
 				go func() {
 					f, err := expl.ChooseFile(".conf")
 					var data []byte

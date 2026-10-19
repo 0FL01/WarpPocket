@@ -1,0 +1,16 @@
+// Compile as an external consumer to prove this path is an importable library,
+// not an extra command. Never invoke Run/sandbox in the native test process.
+package worker_test
+
+import (
+	"testing"
+
+	worker "github.com/windtf/wireproxy/cmd/wireproxy"
+)
+
+func TestWarpPocketRoutingWorkerEntry(t *testing.T) {
+	var entry func(string) = worker.Run
+	if entry == nil {
+		t.Fatal("missing fixed worker entry")
+	}
+}

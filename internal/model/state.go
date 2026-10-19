@@ -22,6 +22,7 @@ type Snapshot struct {
 // Event fields are typed; nil Found means that a progress event did not update
 // the success count, rather than resetting it to zero.
 type Event struct {
+	State                            State
 	Type, Stage, Role, Code, Message string
 	Endpoint                         Endpoint
 	Checked, Limit                   int

@@ -1,0 +1,10 @@
+Mozilla CA root certificates, imported unchanged from certifi 2026.10.18.
+Source: https://github.com/certifi/python-certifi/tree/2026.10.18
+This is data embedded into the Go executable, not a Python dependency.
+
+This Source Code Form is subject to the terms of the Mozilla Public License,
+v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain
+one at https://mozilla.org/MPL/2.0/.
+
+The bundle is derived from Mozilla's certdata.txt:
+https://hg.mozilla.org/projects/nss/file/tip/lib/ckfw/builtins/certdata.txt
