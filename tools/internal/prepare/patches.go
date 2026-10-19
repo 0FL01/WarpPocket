@@ -61,10 +61,9 @@ type payloadSpec struct {
 var sourcePayloads = []payloadSpec{
 	{"wireproxy_dns.go.txt", "guard", "tun/netstack/warppocket_dns.go", "netstack", "LookupContextHost"},
 	{"wireproxy_dns_test.go.txt", "guard", "tun/netstack/warppocket_dns_test.go", "netstack", "TestWarpPocketDNSOrderedFailover"},
-	{"wireproxy_routing.go.txt", "proxy", "warppocket_routing.go", "wireproxy", "newWarpPocketSOCKSRouter"},
-	{"wireproxy_routing_test.go.txt", "proxy", "warppocket_routing_test.go", "wireproxy", "TestWarpPocketRoutingSOCKSProtocol"},
-	{"wireproxy_sandbox_test.go.txt", "proxy", "cmd/wireproxy/warppocket_sandbox_test.go", "worker", "TestWarpPocketRoutingNetworkSandbox"},
-	{"wireproxy_worker_test.go.txt", "proxy", "cmd/wireproxy/warppocket_worker_test.go", "worker_test", "TestWarpPocketRoutingWorkerEntry"},
+	{"wireproxy_resolve_test.go.txt", "proxy", "warppocket_policy_resolve_test.go", "wireproxy", "TestWarpPocketPolicyResolveNames"},
+	{"wireproxy_policy_test.go.txt", "proxy", "cmd/wireproxy/warppocket_policy_test.go", "worker", "TestWarpPocketPolicySource"},
+	{"wireproxy_worker_test.go.txt", "proxy", "cmd/wireproxy/warppocket_worker_test.go", "worker_test", "TestWarpPocketPolicyWorkerEntry"},
 	{"wireproxy_junk.go.txt", "proxy", "warppocket_junk.go", "wireproxy", "newWarpPocketJunkBind"},
 	{"wireproxy_junk_test.go.txt", "proxy", "warppocket_junk_test.go", "wireproxy", "TestWarpPocketJunkInitiation"},
 }
@@ -146,8 +145,9 @@ func patchGoMod(text, version string) (string, error) {
 	return strings.TrimRight(text, "\n") + "\n\nreplace " + wireguardModule + " => ../wireguard-go\n", nil
 }
 
-// Exact pinned anchors retain the established Reserved/DNS/routing and worker
-// transformations. The common bind is wrapped before constructing the device.
+// Exact pinned anchors retain the established Reserved/DNS/worker
+// transformations and validate the upstream sandbox verbatim. The common bind
+// is wrapped before constructing the device.
 func pinnedPatches() []sourcePatch {
 	return []sourcePatch{
 		{"proxy", "config.go", []replacement{
@@ -158,10 +158,13 @@ func pinnedPatches() []sourcePatch {
 		{"proxy", "wireguard.go", []replacement{
 			{"\tdev := device.NewDevice(tun, conn.NewDefaultBind(), device.NewLogger(logLevel, \"\"))\n", wireguardBindNew, "bind"},
 		}},
-		{"proxy", "routine.go", []replacement{{routingOptionsOld, routingOptionsNew, "SOCKS routing options"}}},
+		{"proxy", "routine.go", []replacement{
+			{resolveImportsOld, resolveImportsNew, "IDNA imports"},
+			{routingOptionsOld, routingOptionsNew, "SOCKS WARP-only options"},
+			{resolveEntryOld, resolveEntryNew, "hostname normalization"},
+		}},
 		{"proxy", "cmd/wireproxy/main.go", []replacement{
-			{routingNetworkOld, routingNetworkNew, "DIRECT network sandbox"},
-			{"\t\"github.com/landlock-lsm/go-landlock/landlock\"\n", "\t\"github.com/landlock-lsm/go-landlock/landlock\"\n\tlandlocksyscall \"github.com/landlock-lsm/go-landlock/landlock/syscall\"\n", "Landlock access flags"},
+			{upstreamLockNetwork, upstreamLockNetwork, "upstream sandbox preserved"},
 			{"package main\n", "package worker\n", "importable worker package"},
 			{"\t\"net/http\"\n", "", "remove optional HTTP service"},
 			{"\t\"os/exec\"\n", "", "remove upstream daemon launch"},
@@ -264,14 +267,75 @@ const routingOptionsOld = `	options := []socks5.Option{
 	}
 `
 
-const routingOptionsNew = `	options := newWarpPocketSOCKSRouter(vt).options()
-	options = append(options,
+// Every accepted SOCKS destination uses the tunnel dialer and resolver. The
+// explicit rule keeps the listener CONNECT-only, as upstream defaults would
+// also enable BIND and UDP ASSOCIATE.
+const routingOptionsNew = `	options := []socks5.Option{
+		socks5.WithDial(vt.Tnet.DialContext),
+		socks5.WithResolver(vt),
+		socks5.WithRule(&socks5.PermitCommand{EnableConnect: true}),
 		socks5.WithAuthMethods(authMethods),
 		socks5.WithBufferPool(bufferpool.NewPool(256 * 1024)),
-	)
+	}
 `
 
-const routingNetworkOld = `func lockNetwork(sections []wireproxy.RoutineSpawner, infoAddr *string) {
+const resolveImportsOld = `	"sync"
+	"time"
+
+	"golang.org/x/net/icmp"
+`
+
+const resolveImportsNew = `	"sync"
+	"time"
+	"unicode/utf8"
+
+	"golang.org/x/net/icmp"
+	"golang.org/x/net/idna"
+`
+
+const resolveEntryOld = `// Resolve resolves a hostname and returns an IP.
+// DNS traffic may or may not be routed depending on VirtualTun's setting
+func (d VirtualTun) Resolve(ctx context.Context, name string) (context.Context, net.IP, error) {
+	log.Printf("Resolving address for %s\n", name)
+`
+
+const resolveEntryNew = `// warpPocketIDNA maps internationalized lookup names. It performs conversion
+// only and never classifies or routes destinations.
+var warpPocketIDNA = idna.New(
+	idna.MapForLookup(), idna.Transitional(false), idna.CheckHyphens(false),
+	idna.BidiRule(), idna.VerifyDNSLength(true),
+)
+
+// warpPocketHostname converts a non-ASCII destination name to its ASCII form so
+// the ordered tunneled resolver receives a valid DNS name. ASCII names,
+// existing punycode and IP literals are returned unchanged.
+func warpPocketHostname(name string) (string, error) {
+	for index := 0; index < len(name); index++ {
+		if name[index] >= utf8.RuneSelf {
+			ascii, err := warpPocketIDNA.ToASCII(name)
+			if err != nil {
+				return "", err
+			}
+			return strings.TrimSuffix(ascii, "."), nil
+		}
+	}
+	return name, nil
+}
+
+// Resolve resolves a hostname and returns an IP.
+// DNS traffic may or may not be routed depending on VirtualTun's setting
+func (d VirtualTun) Resolve(ctx context.Context, name string) (context.Context, net.IP, error) {
+	normalized, err := warpPocketHostname(name)
+	if err != nil {
+		return ctx, nil, err
+	}
+	name = normalized
+	log.Printf("Resolving address for %s\n", name)
+`
+
+// upstreamLockNetwork is the pinned, unmodified sandbox. It is kept as an exact
+// anchor so preparation fails if the reviewed restriction changes.
+const upstreamLockNetwork = `func lockNetwork(sections []wireproxy.RoutineSpawner, infoAddr *string) {
 	var rules []landlock.Rule
 	if infoAddr != nil && *infoAddr != "" {
 		rules = append(rules, landlock.BindTCP(extractPort(*infoAddr)))
@@ -293,47 +357,6 @@ const routingNetworkOld = `func lockNetwork(sections []wireproxy.RoutineSpawner,
 	}
 
 	panicIfError(landlock.V4.BestEffort().RestrictNet(rules...))
-}
-`
-
-const routingNetworkNew = `func warpPocketNetworkPolicy(sections []wireproxy.RoutineSpawner, infoAddr *string) (landlock.Config, []landlock.Rule) {
-	var rules, bindRules []landlock.Rule
-	allowDirect := false
-	allowBind := func(port uint16) {
-		rule := landlock.BindTCP(port)
-		rules = append(rules, rule)
-		bindRules = append(bindRules, rule)
-	}
-	if infoAddr != nil && *infoAddr != "" {
-		allowBind(extractPort(*infoAddr))
-	}
-	for _, section := range sections {
-		switch section := section.(type) {
-		case *wireproxy.TCPServerTunnelConfig:
-			rules = append(rules, landlock.ConnectTCP(extractPort(section.Target)))
-		case *wireproxy.HTTPConfig:
-			allowBind(extractPort(section.BindAddress))
-		case *wireproxy.TCPClientTunnelConfig:
-			rules = append(rules, landlock.ConnectTCP(uint16(section.BindAddress.Port)))
-		case *wireproxy.Socks5Config:
-			allowBind(extractPort(section.BindAddress))
-			allowDirect = true
-		case *wireproxy.SNIConfig:
-			allowBind(extractPort(section.BindAddress))
-		}
-	}
-	if allowDirect {
-		// DIRECT needs outbound TCP on arbitrary destination ports. Landlock
-		// cannot express hostname/public-IP rules: the checked SOCKS router
-		// owns those decisions. Keep the bind allowlist and filesystem locks.
-		return landlock.MustConfig(landlock.AccessNetSet(landlocksyscall.AccessNetBindTCP)).BestEffort(), bindRules
-	}
-	return landlock.V4.BestEffort(), rules
-}
-
-func lockNetwork(sections []wireproxy.RoutineSpawner, infoAddr *string) {
-	policy, rules := warpPocketNetworkPolicy(sections, infoAddr)
-	panicIfError(policy.RestrictNet(rules...))
 }
 `
 

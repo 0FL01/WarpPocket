@@ -270,13 +270,18 @@ func TestExistingProfilesAutomaticRecovery(t *testing.T) {
 		t.Fatal("successful probe result was not persisted")
 	}
 	report["primary_preserved"], report["probe_saved"] = true, true
+	// A former split-routing destination and a literal IP must both resolve and
+	// connect through WARP only. This budget covers the three HTTPS checks.
+	routes, cancelRoutes := context.WithTimeout(context.Background(), 50*time.Second)
+	defer cancelRoutes()
 	for _, host := range []string{"ya.ru", "vk.com"} {
-		proveDirect(t, primary, host)
+		proveTunneledHTTPS(t, routes, primary, host, host, "/", false)
 	}
+	proveTunneledHTTPS(t, routes, primary, "1.1.1.1", "1.1.1.1", "/cdn-cgi/trace", true)
 	if _, err := health.Check(context.Background(), primary.Port); err != nil {
 		t.Fatal("final WARP/independent HTTPS failed")
 	}
-	report["direct_host_socket_proof"], report["ip_only_stays_warp"] = true, true
+	report["former_direct_hosts_https_via_warp"], report["numeric_ip_https_warp_no_host_tcp"] = true, true
 
 	// Probe continuity and routing above deliberately precede the restart. A
 	// worker's TCP sessions cannot migrate; prove a NEW verified primary instead
@@ -364,7 +369,7 @@ func continuousPrimary(t *testing.T, port int) (*http.Transport, func(context.Co
 
 // This Linux opt-in proof inspects actual sockets owned by the engine rather
 // than confusing an HTTP status, local proxy connection or synthetic dial with
-// DIRECT transport. There are no system resolver calls.
+// direct transport. There are no system resolver calls.
 func hostSockets(t *testing.T, pid int) map[string]string {
 	t.Helper()
 	owned := map[string]bool{}
@@ -406,58 +411,83 @@ func hostSockets(t *testing.T, pid int) map[string]string {
 	}
 	return result
 }
-func proveDirect(t *testing.T, primary *backend.Instance, host string) {
+// proveTunneledHTTPS proves one destination is reached through WARP only: the
+// worker establishes the connection, TLS verifies against the embedded roots,
+// an HTTPS response arrives, and the engine creates no host TCP connection to
+// the destination at any stage. The literal-IP case additionally requires the
+// Cloudflare trace to report WARP.
+func proveTunneledHTTPS(t *testing.T, ctx context.Context, primary *backend.Instance, target, serverName, path string, requireWARPTrace bool) {
 	t.Helper()
-	dial, err := proxy.SOCKS5("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(primary.Port)), nil, &net.Dialer{Timeout: 15 * time.Second})
+	dial, err := proxy.SOCKS5("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(primary.Port)), nil, &net.Dialer{Timeout: 7 * time.Second})
 	if err != nil {
 		t.Fatal("SOCKS client setup failed")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-	defer cancel()
 	before := hostSockets(t, primary.PID())
-	connection, err := dial.(proxy.ContextDialer).DialContext(ctx, "tcp", net.JoinHostPort(host, "443"))
+	connection, err := dial.(proxy.ContextDialer).DialContext(ctx, "tcp", net.JoinHostPort(target, "443"))
 	if err != nil {
-		// These are fixed public fixture hostnames and SOCKS protocol errors,
-		// never account/config input or raw engine logs.
-		t.Fatalf("DIRECT SOCKS connect to %s failed: %v", host, err)
+		// These are fixed public fixture destinations and SOCKS protocol
+		// errors, never account/config input or raw engine logs.
+		t.Fatalf("tunneled SOCKS connect to %s failed: %v", target, err)
 	}
 	defer connection.Close()
-	after := hostSockets(t, primary.PID())
-	target := ""
-	for inode, ip := range after {
-		if _, exists := before[inode]; !exists {
-			if target != "" {
-				t.Fatal("multiple new host connections")
-			}
-			target = ip
-		}
-	}
-	if target == "" {
-		t.Fatal("DIRECT did not create an engine-owned host TCP connection")
-	}
-	ipConnection, err := dial.(proxy.ContextDialer).DialContext(ctx, "tcp", net.JoinHostPort(target, "443"))
-	if err != nil {
-		t.Fatal("IP-only WARP connect failed")
-	}
-	defer ipConnection.Close()
-	if len(hostSockets(t, primary.PID())) != len(after) {
-		t.Fatal("IP-only request escaped WARP")
+	if newHostSockets(before, hostSockets(t, primary.PID())) {
+		t.Fatalf("engine created a host TCP connection for %s", target)
 	}
 	pool, err := trust.Pool()
 	if err != nil {
 		t.Fatal("embedded trust unavailable")
 	}
-	secure := tls.Client(connection, &tls.Config{ServerName: host, RootCAs: pool, MinVersion: tls.VersionTLS12})
+	secure := tls.Client(connection, &tls.Config{ServerName: serverName, RootCAs: pool, MinVersion: tls.VersionTLS12})
 	if secure.HandshakeContext(ctx) != nil {
-		t.Fatal("DIRECT TLS verification failed")
+		t.Fatalf("tunneled TLS verification failed for %s", target)
 	}
-	_ = secure.SetDeadline(time.Now().Add(10 * time.Second))
-	request, _ := http.NewRequest("HEAD", "https://"+host+"/", nil)
+	if newHostSockets(before, hostSockets(t, primary.PID())) {
+		t.Fatalf("engine fell back to a host TCP connection for %s", target)
+	}
+	_ = secure.SetDeadline(time.Now().Add(5 * time.Second))
+	request, _ := http.NewRequest("GET", "https://"+serverName+path, nil)
 	if request.Write(secure) != nil {
-		t.Fatal("DIRECT request failed")
+		t.Fatalf("tunneled HTTPS request failed for %s", target)
 	}
-	line, err := bufio.NewReader(io.LimitReader(secure, 4096)).ReadString('\n')
-	if err != nil || !strings.HasPrefix(line, "HTTP/") {
-		t.Fatal("DIRECT HTTPS response missing")
+	response, err := http.ReadResponse(bufio.NewReader(io.LimitReader(secure, 16384)), request)
+	if err != nil {
+		t.Fatalf("tunneled HTTPS response missing for %s: %v", target, err)
 	}
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, 16385))
+	response.Body.Close()
+	if readErr != nil || len(body) > 16384 {
+		t.Fatalf("invalid tunneled HTTPS response for %s", target)
+	}
+	if requireWARPTrace && (response.StatusCode != http.StatusOK || !warpTraceEnabled(body)) {
+		t.Fatal("literal-IP request did not return a verified WARP trace")
+	}
+	if newHostSockets(before, hostSockets(t, primary.PID())) {
+		t.Fatalf("engine escaped WARP for %s", target)
+	}
+}
+
+// newHostSockets reports whether the engine gained an established host TCP
+// connection to a remote port 443. New inode membership is compared, not a
+// count, so a replaced or transient socket cannot hide a direct connection.
+func newHostSockets(before, after map[string]string) bool {
+	for inode := range after {
+		if _, exists := before[inode]; !exists {
+			return true
+		}
+	}
+	return false
+}
+
+// warpTraceEnabled reports exactly one warp=on/plus field, the same shape the
+// health check requires.
+func warpTraceEnabled(body []byte) bool {
+	count, enabled := 0, false
+	for _, line := range strings.Split(string(body), "\n") {
+		key, value, _ := strings.Cut(strings.TrimSuffix(line, "\r"), "=")
+		if key == "warp" {
+			count++
+			enabled = value == "on" || value == "plus"
+		}
+	}
+	return count == 1 && enabled
 }

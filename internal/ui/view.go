@@ -24,7 +24,7 @@ import (
 )
 
 const SOCKSAddress = "127.0.0.1:25344"
-const RoutingHint = "RU/РФ/SU и VK — напрямую; остальное — WARP"
+const RoutingHint = "Весь трафик через прокси — WARP, без исключений"
 
 type Controller interface {
 	Status() model.Snapshot

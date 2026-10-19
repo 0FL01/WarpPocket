@@ -119,7 +119,7 @@ func (f *uiFrame) pointerClick(t *testing.T, label string) {
 }
 
 func TestStateActionsAndRoutingHint(t *testing.T) {
-	if SOCKSAddress != "127.0.0.1:25344" || RoutingHint != "RU/РФ/SU и VK — напрямую; остальное — WARP" {
+	if SOCKSAddress != "127.0.0.1:25344" || RoutingHint != "Весь трафик через прокси — WARP, без исключений" {
 		t.Fatal("changed network explanation")
 	}
 	for _, tc := range []struct {

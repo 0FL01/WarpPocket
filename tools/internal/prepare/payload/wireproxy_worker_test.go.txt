@@ -8,7 +8,7 @@ import (
 	worker "github.com/windtf/wireproxy/cmd/wireproxy"
 )
 
-func TestWarpPocketRoutingWorkerEntry(t *testing.T) {
+func TestWarpPocketPolicyWorkerEntry(t *testing.T) {
 	var entry func(string) = worker.Run
 	if entry == nil {
 		t.Fatal("missing fixed worker entry")

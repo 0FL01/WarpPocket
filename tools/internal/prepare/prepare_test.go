@@ -46,7 +46,7 @@ func TestNativePreparationEnvironmentAndGates(t *testing.T) {
 		{"go", "env", "GOHOSTOS", "GOHOSTARCH"},
 		{"go", "mod", "download", "-json", wireguardModule + "@" + testPins(t).Wireguard.Version},
 		{"go", "test", "./tun/netstack", "-run", "^TestWarpPocketDNS", "-count=1", "-v"},
-		{"go", "test", ".", "./cmd/wireproxy", "-run", "^TestWarpPocketRouting", "-count=1", "-v"},
+		{"go", "test", ".", "./cmd/wireproxy", "-run", "^TestWarpPocketPolicy", "-count=1", "-v"},
 		{"go", "test", ".", "-run", "^TestWarpPocketJunk", "-count=1", "-v"},
 	}
 	for index, want := range wantCommands {
@@ -71,7 +71,7 @@ func TestNativePreparationEnvironmentAndGates(t *testing.T) {
 }
 
 func TestNativeGateFailureAbortsPublication(t *testing.T) {
-	for _, gate := range []string{"native DNS tests", "native routing tests", "native junk tests"} {
+	for _, gate := range []string{"native DNS tests", "native policy tests", "native junk tests"} {
 		t.Run(gate, func(t *testing.T) {
 			root, p, calls := mockPreparation(t, gate)
 			deps := filepath.Join(root, "build", "deps")
@@ -83,7 +83,7 @@ func TestNativeGateFailureAbortsPublication(t *testing.T) {
 			assertFile(t, filepath.Join(deps, "wireguard-go", "marker"), "old guard")
 			assertFile(t, filepath.Join(deps, "unrelated", "marker"), "untouched")
 			want := 3
-			if gate == "native routing tests" {
+			if gate == "native policy tests" {
 				want = 4
 			}
 			if gate == "native junk tests" {
@@ -209,11 +209,11 @@ func mockPreparation(t *testing.T, failGate string) (string, preparer, *[]comman
 					t.Fatal(err)
 				}
 				return commandResult{Stdout: data}, nil
-			case "native DNS tests", "native routing tests", "native junk tests":
+			case "native DNS tests", "native policy tests", "native junk tests":
 				if call.Label == failGate {
 					return commandResult{Stdout: []byte("FAIL fixture gate\n")}, fmt.Errorf("%s failed: fixture failure", call.Label)
 				}
-				if _, err := os.Stat(filepath.Join(root, "build", "deps", "wireproxy", "warppocket_routing.go")); err == nil && len(calls) <= 5 {
+				if _, err := os.Stat(filepath.Join(root, "build", "deps", "wireproxy", "warppocket_junk.go")); err == nil && len(calls) <= 5 {
 					t.Fatal("sources published before native gates completed")
 				}
 				return commandResult{Stdout: []byte("PASS fixture gate\n")}, nil

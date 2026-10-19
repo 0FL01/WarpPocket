@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -144,7 +145,13 @@ func Run(path string, wait bool) (result error) {
 	}
 	owned = &owner{Controller: a.Controller, app: a, instance: instance}
 	report.ChildPID, report.Port = instance.PID(), instance.Port
-	report.Checks["same_executable"], report.Checks["socks_started"] = true, true
+	report.Checks["same_executable"] = true
+	// The live worker must refuse every command except CONNECT before the
+	// ready report claims a working SOCKS5 listener.
+	if err := verifySOCKSPolicy(instance.Port); err != nil {
+		return err
+	}
+	report.Checks["socks_started"] = true
 	report.Checks["engine_alive"] = instance.Process.Alive()
 	ready := false
 	native := runtime.GOOS == "windows"
@@ -254,6 +261,53 @@ func Run(path string, wait bool) (result error) {
 	}
 	return nil
 }
+
+// verifySOCKSPolicy proves the live worker refuses every command except
+// CONNECT. Numeric destinations keep this check independent of DNS and of the
+// synthetic, unreachable WARP peer.
+func verifySOCKSPolicy(port int) error {
+	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	// SOCKS5 BIND and UDP ASSOCIATE.
+	for _, command := range []byte{2, 3} {
+		if probeSOCKSCommand(address, command) {
+			continue
+		}
+		return model.E("smoke_socks_policy", "Сетевой компонент не ограничивает команды SOCKS5.")
+	}
+	return nil
+}
+
+// probeSOCKSCommand performs one bounded greeting and command request. Only the
+// SOCKS5 rule-failure reply proves the command was denied before any socket
+// attempt; success, a different reply, garbage or a timeout are all failures.
+func probeSOCKSCommand(address string, command byte) bool {
+	connection, err := (&net.Dialer{Timeout: 2 * time.Second}).Dial("tcp4", address)
+	if err != nil {
+		return false
+	}
+	defer connection.Close()
+	if connection.SetDeadline(time.Now().Add(5*time.Second)) != nil {
+		return false
+	}
+	if _, err := connection.Write([]byte{5, 1, 0}); err != nil {
+		return false
+	}
+	var greeting [2]byte
+	if _, err := io.ReadFull(connection, greeting[:]); err != nil || greeting != [2]byte{5, 0} {
+		return false
+	}
+	// ATYP 0x01 with a loopback address: a valid request that the command rule
+	// rejects before any dial.
+	if _, err := connection.Write([]byte{5, command, 0, 1, 127, 0, 0, 1, 0, 53}); err != nil {
+		return false
+	}
+	var reply [10]byte
+	if _, err := io.ReadFull(connection, reply[:]); err != nil || reply[0] != 5 || reply[1] != 2 {
+		return false
+	}
+	return true
+}
+
 func all(checks map[string]bool) bool {
 	for _, value := range checks {
 		if !value {

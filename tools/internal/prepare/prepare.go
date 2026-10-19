@@ -15,7 +15,7 @@ import (
 
 const (
 	wireguardModule = "golang.zx2c4.com/wireguard"
-	supportedPatch  = "reserved-support+ordered-dns+split-routing+handshake-junk"
+	supportedPatch  = "reserved-support+ordered-dns+handshake-junk"
 	maxSourceBytes  = 20 * 1024 * 1024
 )
 
@@ -159,7 +159,7 @@ func (p preparer) copyWireguard(ctx context.Context, proxy, guard, cache string,
 func (p preparer) nativeGates(ctx context.Context, proxy, guard string, env []string) error {
 	for _, cmd := range []command{
 		{Args: []string{"go", "test", "./tun/netstack", "-run", "^TestWarpPocketDNS", "-count=1", "-v"}, Dir: guard, Env: env, Timeout: 300 * time.Second, Label: "native DNS tests"},
-		{Args: []string{"go", "test", ".", "./cmd/wireproxy", "-run", "^TestWarpPocketRouting", "-count=1", "-v"}, Dir: proxy, Env: env, Timeout: 300 * time.Second, Label: "native routing tests"},
+		{Args: []string{"go", "test", ".", "./cmd/wireproxy", "-run", "^TestWarpPocketPolicy", "-count=1", "-v"}, Dir: proxy, Env: env, Timeout: 300 * time.Second, Label: "native policy tests"},
 		{Args: []string{"go", "test", ".", "-run", "^TestWarpPocketJunk", "-count=1", "-v"}, Dir: proxy, Env: env, Timeout: 300 * time.Second, Label: "native junk tests"},
 	} {
 		result, err := p.run(ctx, cmd)

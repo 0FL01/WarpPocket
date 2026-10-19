@@ -1,0 +1,81 @@
+// Injected into the pinned command package. It inspects the prepared sources
+// directly and never applies a network sandbox to the test process.
+package worker
+
+import (
+	"os"
+	"strings"
+	"testing"
+)
+
+const warpPocketLockNetworkSource = `func lockNetwork(sections []wireproxy.RoutineSpawner, infoAddr *string) {
+	var rules []landlock.Rule
+	if infoAddr != nil && *infoAddr != "" {
+		rules = append(rules, landlock.BindTCP(extractPort(*infoAddr)))
+	}
+
+	for _, section := range sections {
+		switch section := section.(type) {
+		case *wireproxy.TCPServerTunnelConfig:
+			rules = append(rules, landlock.ConnectTCP(extractPort(section.Target)))
+		case *wireproxy.HTTPConfig:
+			rules = append(rules, landlock.BindTCP(extractPort(section.BindAddress)))
+		case *wireproxy.TCPClientTunnelConfig:
+			rules = append(rules, landlock.ConnectTCP(uint16(section.BindAddress.Port)))
+		case *wireproxy.Socks5Config:
+			rules = append(rules, landlock.BindTCP(extractPort(section.BindAddress)))
+		case *wireproxy.SNIConfig:
+			rules = append(rules, landlock.BindTCP(extractPort(section.BindAddress)))
+		}
+	}
+
+	panicIfError(landlock.V4.BestEffort().RestrictNet(rules...))
+}
+`
+
+const warpPocketSOCKSOptionsSource = `	options := []socks5.Option{
+		socks5.WithDial(vt.Tnet.DialContext),
+		socks5.WithResolver(vt),
+		socks5.WithRule(&socks5.PermitCommand{EnableConnect: true}),
+		socks5.WithAuthMethods(authMethods),
+		socks5.WithBufferPool(bufferpool.NewPool(256 * 1024)),
+	}
+`
+
+func TestWarpPocketPolicySource(t *testing.T) {
+	main, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal("prepared worker entry is unavailable")
+	}
+	routine, err := os.ReadFile("../../routine.go")
+	if err != nil {
+		t.Fatal("prepared SOCKS routine is unavailable")
+	}
+	// The pinned upstream sandbox is preserved verbatim: a SOCKS configuration
+	// receives its bind port only, so shared host TCP stays denied.
+	if !strings.Contains(string(main), warpPocketLockNetworkSource) {
+		t.Fatal("prepared worker does not preserve the upstream network sandbox")
+	}
+	for _, forbidden := range []string{"warpPocketNetworkPolicy", "AccessNetBindTCP", "AccessNetSet", "landlocksyscall"} {
+		if strings.Contains(string(main), forbidden) {
+			t.Fatalf("relaxed network policy survived in the worker: %s", forbidden)
+		}
+	}
+	// Every accepted SOCKS destination uses the WARP dialer and resolver; the
+	// server keeps its CONNECT-only rule and has no request-aware routing.
+	if !strings.Contains(string(routine), warpPocketSOCKSOptionsSource) || !strings.Contains(string(routine), "server := socks5.NewServer(options...)") {
+		t.Fatal("prepared SOCKS options are not the WARP-only set")
+	}
+	for _, forbidden := range []string{"WithDialAndRequest", "newWarpPocketSOCKSRouter", "warpPocketDirectHost", "warpPocketDirectRoots", "warpPocketDial"} {
+		if strings.Contains(string(routine), forbidden) {
+			t.Fatalf("split-routing code survived in the SOCKS routine: %s", forbidden)
+		}
+	}
+	for _, path := range []string{"../../warppocket_routing.go", "../../warppocket_routing_test.go"} {
+		if _, err := os.Stat(path); err == nil {
+			t.Fatalf("generated split-routing artifact survived: %s", path)
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+}

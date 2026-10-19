@@ -159,7 +159,7 @@ func TestInvalidPayloadsAbortBeforeWrites(t *testing.T) {
 				case "syntax":
 					return []byte("not go source"), nil
 				case "package":
-					return []byte("package main\nfunc TestWarpPocketRoutingWorkerEntry() {}\n"), nil
+					return []byte("package main\nfunc TestWarpPocketPolicyWorkerEntry() {}\n"), nil
 				case "missing-function":
 					return []byte("package worker_test\n"), nil
 				case "missing-payload":
@@ -230,18 +230,51 @@ func TestWorkerRunEntry(t *testing.T) {
 }
 
 func TestPreservedPayloadDigests(t *testing.T) {
-	// Digests of the pre-migration reference files. The sandbox digest differs
-	// only because package main is intentionally renamed to package worker.
+	// Digests of the pre-migration reference files for behavior that this
+	// change does not touch.
 	for name, want := range map[string]string{
-		"wireproxy_dns.go.txt":          "e71b0d3e42890df7e1e0fe53d73dc4ba1b204512e02e118542991f9b524d2f9d",
-		"wireproxy_routing.go.txt":      "4d10ae2bfd059bd26e70b4ad51e694407a02ee5450ef0af46662e3e75016ddd0",
-		"wireproxy_dns_test.go.txt":     "78772a3df9409301fead5b093c7fad58f3fe6463f7ad19a5e5dc248b3dfc2b93",
-		"wireproxy_routing_test.go.txt": "f8c4f4789b65871f2eb5388478989a4bc124faf4a7196db97a8ab69afdc61857",
-		"wireproxy_sandbox_test.go.txt": "0d34f5f2d635b8e1a90748ee6f479d03e3e5bbcf5ba6d21e568867536b6dd52b",
+		"wireproxy_dns.go.txt":      "e71b0d3e42890df7e1e0fe53d73dc4ba1b204512e02e118542991f9b524d2f9d",
+		"wireproxy_dns_test.go.txt": "78772a3df9409301fead5b093c7fad58f3fe6463f7ad19a5e5dc248b3dfc2b93",
 	} {
 		data := mustPayload(t, name)
 		if got := fmt.Sprintf("%x", sha256.Sum256([]byte(data))); got != want {
 			t.Errorf("%s changed preserved logic: digest=%s, want=%s", name, got, want)
+		}
+	}
+}
+
+func TestWarpOnlySOCKSOptionsAndPreservedSandbox(t *testing.T) {
+	proxy, guard := fixtureRoots(t)
+	if err := patchSources(proxy, guard, testPins(t)); err != nil {
+		t.Fatal(err)
+	}
+	routine, err := os.ReadFile(filepath.Join(proxy, "routine.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(routine, []byte(routingOptionsNew)) || !bytes.Contains(routine, []byte(resolveEntryNew)) {
+		t.Fatal("generated SOCKS routine lacks the WARP-only options or hostname normalization")
+	}
+	for _, forbidden := range []string{"WithDialAndRequest", "newWarpPocketSOCKSRouter", "warpPocketDirectHost", "warpPocketDirectRoots"} {
+		if bytes.Contains(routine, []byte(forbidden)) {
+			t.Fatalf("split-routing reference survived in the SOCKS routine: %s", forbidden)
+		}
+	}
+	main, err := os.ReadFile(filepath.Join(proxy, "cmd", "wireproxy", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(main, []byte(upstreamLockNetwork)) {
+		t.Fatal("generated worker changed the pinned upstream network sandbox")
+	}
+	for _, forbidden := range []string{"warpPocketNetworkPolicy", "landlocksyscall", "AccessNetSet"} {
+		if bytes.Contains(main, []byte(forbidden)) {
+			t.Fatalf("relaxed network sandbox survived in the worker: %s", forbidden)
+		}
+	}
+	for _, spec := range sourcePayloads {
+		if strings.Contains(spec.name, "routing") || strings.Contains(spec.path, "routing") {
+			t.Fatalf("routing payload is still generated: %s", spec.name)
 		}
 	}
 }

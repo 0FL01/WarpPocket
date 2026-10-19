@@ -1,0 +1,132 @@
+// Injected into the pinned wireproxy root. It exercises the real
+// VirtualTun.Resolve and the tunneled resolver chain instead of a copy of the
+// former hostname classification.
+package wireproxy
+
+import (
+	"context"
+	"net/netip"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
+	"golang.zx2c4.com/wireguard/tun/netstack"
+)
+
+func warpPocketResolvePacket(question dnsmessage.Question, id uint16) ([]byte, error) {
+	builder := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: id, Response: true, RecursionAvailable: true})
+	if err := builder.StartQuestions(); err != nil {
+		return nil, err
+	}
+	if err := builder.Question(question); err != nil {
+		return nil, err
+	}
+	if err := builder.StartAnswers(); err != nil {
+		return nil, err
+	}
+	header := dnsmessage.ResourceHeader{Name: question.Name, Class: dnsmessage.ClassINET, TTL: 60}
+	if err := builder.AResource(header, dnsmessage.AResource{A: [4]byte{192, 0, 2, 7}}); err != nil {
+		return nil, err
+	}
+	return builder.Finish()
+}
+
+func TestWarpPocketPolicyResolveNames(t *testing.T) {
+	server := netip.MustParseAddr("192.0.2.53")
+	// The fixture server address is also a local address of the virtual NIC so
+	// its queries loop back inside the stack instead of leaving through the
+	// unattached TUN channel, exactly as the ordered-DNS tests do.
+	device, tnet, err := netstack.CreateNetTUN([]netip.Addr{server}, []netip.Addr{server}, 1280)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := tnet.ListenUDPAddrPort(netip.AddrPortFrom(server, 53))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mutex sync.Mutex
+	var names []string
+	served := make(chan struct{})
+	go func() {
+		buffer := make([]byte, 512)
+		for {
+			n, peer, err := listener.ReadFrom(buffer)
+			if err != nil {
+				close(served)
+				return
+			}
+			var parser dnsmessage.Parser
+			header, err := parser.Start(buffer[:n])
+			if err != nil {
+				continue
+			}
+			question, err := parser.Question()
+			if err != nil {
+				continue
+			}
+			mutex.Lock()
+			names = append(names, question.Name.String())
+			mutex.Unlock()
+			response, err := warpPocketResolvePacket(question, header.ID)
+			if err != nil {
+				continue
+			}
+			_, _ = listener.WriteTo(response, peer)
+		}
+	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		_ = device.Close()
+		select {
+		case <-served:
+		case <-time.After(2 * time.Second):
+			t.Error("virtual DNS server did not stop")
+		}
+	})
+	lookups := func() []string {
+		mutex.Lock()
+		defer mutex.Unlock()
+		return append([]string(nil), names...)
+	}
+	tunnel := &VirtualTun{Tnet: tnet, ResolveConfig: &ResolveConfig{ResolveStrategy: "ipv4"}}
+	for _, test := range []struct {
+		name, host string
+		expected   []string
+	}{
+		{"unicode", "пример.рф", []string{"xn--e1afmkfd.xn--p1ai."}},
+		{"unicode-uppercase-root-dot", "ПРИМЕР.РФ.", []string{"xn--e1afmkfd.xn--p1ai."}},
+		{"punycode", "xn--e1afmkfd.xn--p1ai", []string{"xn--e1afmkfd.xn--p1ai."}},
+		{"ascii", "example.test", []string{"example.test."}},
+		{"literal", "192.0.2.7", nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			before := len(lookups())
+			_, ip, err := tunnel.Resolve(context.Background(), test.host)
+			if err != nil || ip.String() != "192.0.2.7" {
+				t.Fatalf("resolve %q: %v, %v", test.host, ip, err)
+			}
+			observed := lookups()
+			if test.expected == nil {
+				if len(observed) != before {
+					t.Fatalf("numeric destination reached DNS: %v", observed[before:])
+				}
+				return
+			}
+			if len(observed) != before+1 || observed[before] != test.expected[0] {
+				t.Fatalf("resolver received %v, want %v", observed[before:], test.expected)
+			}
+		})
+	}
+	t.Run("invalid-unicode-is-rejected", func(t *testing.T) {
+		before := len(lookups())
+		_, ip, err := tunnel.Resolve(context.Background(), strings.Repeat("я", 64)+".рф")
+		if err == nil || ip != nil {
+			t.Fatalf("invalid internationalized name was not rejected: %v, %v", ip, err)
+		}
+		if observed := lookups(); len(observed) != before {
+			t.Fatalf("invalid name reached DNS: %v", observed[before:])
+		}
+	})
+}
