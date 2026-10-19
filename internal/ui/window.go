@@ -26,6 +26,7 @@ type Options struct {
 	Import      func(data []byte, role string) error
 	// Explicit offline-smoke probes, never enabled for normal user windows.
 	NativeChecks, CloseWithPicker bool
+	NativeProfilePath             string
 	// OnFrame runs in the event loop AFTER a real native frame submission.
 	// Returning true requests the same asynchronous close as the OS close action.
 	OnFrame func(FrameInfo) bool
@@ -47,7 +48,7 @@ func Run(controller Controller, options Options) error {
 	expl := explorer.NewExplorer(w)
 	var probe *nativeProbe
 	if options.NativeChecks {
-		probe = newNativeProbe(options.CloseWithPicker)
+		probe = newNativeProbe(options.CloseWithPicker, options.NativeProfilePath)
 		defer probe.cancel()
 	}
 	results := make(chan dialogResult, 1)
@@ -105,7 +106,7 @@ func Run(controller Controller, options Options) error {
 			select {
 			case result := <-results:
 				v.dialogBusy = false
-				if probe != nil {
+				if probe != nil && probe.imported {
 					probe.pickerCancelled = errors.Is(result.err, explorer.ErrUserDecline)
 				}
 				if !v.closing {
@@ -118,8 +119,14 @@ func Run(controller Controller, options Options) error {
 						// a worker. Networking never runs in this callback.
 						if err := options.Import(result.data, result.role); err != nil {
 							v.notice = model.SafeMessage(err)
+							if probe != nil {
+								probe.err = err
+							}
 						} else {
 							v.notice = "Профиль сохранён и будет использован при подключении."
+							if probe != nil && !probe.imported {
+								probe.importedFile()
+							}
 						}
 					}
 				}
@@ -139,7 +146,7 @@ func Run(controller Controller, options Options) error {
 			if probe != nil && probe.err != nil {
 				startClose()
 			}
-			if probe != nil && probe.pickerSeen && probe.closeWithPicker && !probe.closeSent {
+			if probe != nil && probe.imported && probe.pickerSeen && probe.closeWithPicker && !probe.closeSent {
 				probe.closeSent = true
 				w.Perform(system.ActionClose)
 			}

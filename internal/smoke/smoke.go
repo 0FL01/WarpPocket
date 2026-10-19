@@ -18,6 +18,7 @@ import (
 	"github.com/0FL01/WarpPocket/internal/backend"
 	"github.com/0FL01/WarpPocket/internal/controller"
 	"github.com/0FL01/WarpPocket/internal/model"
+	"github.com/0FL01/WarpPocket/internal/profile"
 	"github.com/0FL01/WarpPocket/internal/resources"
 	"github.com/0FL01/WarpPocket/internal/storage"
 	"github.com/0FL01/WarpPocket/internal/trust"
@@ -133,8 +134,33 @@ func Run(path string, wait bool) (result error) {
 	report.Checks["engine_alive"] = instance.Process.Alive()
 	ready := false
 	native := runtime.GOOS == "windows"
+	profilePath := ""
+	expected, renderErr := profile.Render(syntheticProfile(), nil)
+	if renderErr != nil {
+		return renderErr
+	}
+	if native {
+		profilePath = filepath.Join(report.Workspace, "проверка профиля.conf")
+		if err := storage.AtomicWrite(profilePath, []byte(expected)); err != nil {
+			return err
+		}
+	}
 	end := time.Now().Add(180 * time.Second)
-	err = ui.Run(owned, ui.Options{Title: "WarpPocket — offline Go/Gio smoke", Diagnostics: a.Diagnostics, Licenses: resources.Licenses, NativeChecks: native, CloseWithPicker: !wait,
+	err = ui.Run(owned, ui.Options{Title: "WarpPocket — offline Go/Gio smoke", Diagnostics: a.Diagnostics, Licenses: resources.Licenses, NativeChecks: native, CloseWithPicker: !wait, NativeProfilePath: profilePath,
+		Import: func(data []byte, role string) error {
+			if err := a.Import(data, role); err != nil {
+				return err
+			}
+			p, err := a.Profiles.Load(role)
+			if err != nil {
+				return err
+			}
+			got, err := profile.Render(p, nil)
+			if err != nil || got != expected {
+				return model.E("native_import", "Импортированный профиль не совпал с проверочным.")
+			}
+			return nil
+		},
 		OnFrame: func(info ui.FrameInfo) bool {
 			if !ready && info.Count >= 3 && (!native || info.NativeChecks) {
 				ready = true
@@ -143,7 +169,7 @@ func Run(path string, wait bool) (result error) {
 					report.Checks["engine_alive"] = instance.Process.Alive()
 				}
 				if native {
-					report.Checks["native_clipboard"], report.Checks["native_picker"] = true, true
+					report.Checks["native_clipboard"], report.Checks["native_import"], report.Checks["native_picker"] = true, true, true
 				}
 				report.OK = all(report.Checks)
 				if err := writeReport(path, report); err != nil {

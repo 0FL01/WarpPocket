@@ -17,6 +17,8 @@ import (
 // or imports a user file. All widget/probe state stays on the window loop.
 type nativeProbe struct {
 	closeWithPicker                     bool
+	profilePath                         string
+	imported                            bool
 	frames                              int
 	clipboardOK, readSent               bool
 	pickerRequested, pickerCancelled    bool
@@ -30,9 +32,9 @@ type nativeProbe struct {
 	err                                 error
 }
 
-func newNativeProbe(closeWithPicker bool) *nativeProbe {
+func newNativeProbe(closeWithPicker bool, profilePath string) *nativeProbe {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	p := &nativeProbe{closeWithPicker: closeWithPicker, ctx: ctx, cancel: cancel,
+	p := &nativeProbe{closeWithPicker: closeWithPicker, profilePath: profilePath, ctx: ctx, cancel: cancel,
 		seen: make(chan struct{}, 1), allowCancel: make(chan struct{}), result: make(chan error, 1)}
 	if !closeWithPicker {
 		close(p.allowCancel)
@@ -87,16 +89,30 @@ func (p *nativeProbe) frame(gtx layout.Context, v *View) {
 }
 
 func (p *nativeProbe) startPicker() {
-	go func() { p.result <- closeNativePicker(p.ctx, p.seen, p.allowCancel) }()
+	path, allow := "", (<-chan struct{})(p.allowCancel)
+	if !p.imported {
+		path = p.profilePath
+		ready := make(chan struct{})
+		close(ready)
+		allow = ready
+	}
+	ctx, seen, result := p.ctx, p.seen, p.result
+	go func() { result <- completeNativePicker(ctx, seen, allow, path) }()
+}
+
+func (p *nativeProbe) importedFile() {
+	p.imported = true
+	p.pickerRequested, p.pickerSeen, p.cancelDone, p.pickerCancelled = false, false, false, false
+	p.seen, p.result = make(chan struct{}, 1), make(chan error, 1)
 }
 
 func (p *nativeProbe) closing(pickerBusy bool) {
-	if p.closeWithPicker && pickerBusy && !p.closeAborted {
+	if p.closeWithPicker && p.imported && pickerBusy && !p.closeAborted {
 		p.closeAborted = true
 		close(p.allowCancel)
 	}
 }
 
 func (p *nativeProbe) ready() bool {
-	return p.clipboardOK && p.pickerCancelled && p.cancelDone && p.err == nil && (!p.closeWithPicker || p.closeAborted)
+	return p.clipboardOK && p.imported && p.pickerCancelled && p.cancelDone && p.err == nil && (!p.closeWithPicker || p.closeAborted)
 }

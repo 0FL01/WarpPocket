@@ -14,12 +14,12 @@ const MaxReportBytes = 64 * 1024
 
 var commonChecks = []string{
 	"gio_frame", "embedded_resources", "same_executable", "socks_started", "engine_alive",
-	"native_clipboard", "native_picker",
+	"native_clipboard", "native_import", "native_picker",
 }
 
 var gracefulChecks = []string{
 	"gio_frame", "embedded_resources", "same_executable", "socks_started", "engine_alive",
-	"native_clipboard", "native_picker",
+	"native_clipboard", "native_import", "native_picker",
 	"engine_stopped", "runtime_clean", "window_closed",
 }
 

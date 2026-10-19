@@ -8,6 +8,6 @@ import (
 	"github.com/0FL01/WarpPocket/internal/model"
 )
 
-func closeNativePicker(context.Context, chan<- struct{}, <-chan struct{}) error {
+func completeNativePicker(context.Context, chan<- struct{}, <-chan struct{}, string) error {
 	return model.E("windows_required", "Эта нативная проверка требует Windows.")
 }
