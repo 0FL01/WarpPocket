@@ -75,13 +75,13 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 
 ## Current Checkpoint
 - Closes: native Windows parity portions of R1–R4 and measured R5 footprint.
-- Smallest next action: diagnose the packaged Windows graceful timeout with fixed-stage, frame-count-only JSON progress. Keep all native UI requirements; ensure a failed smoke-owned picker closes on its bounded timeout rather than hiding the cause behind an open modal. Linux/Windows tool and core suites are green; packaged UI/crash and footprint must still pass.
+- Smallest next action: retain the bounded fixed-stage history, not only the terminal timeout code, in the native progress report; identify which UI phase is waiting. Linux/Windows tool and core suites are green; clipboard/import/picker, packaged crash and footprint must still pass.
 - Expected evidence: successful Linux/Windows Go tests and native packaged smoke plus safe footprint comparison. Only then deliver master and compare its sole rolling EXE asset with the tested artifact.
 - Replan if: an observed native failure exposes a concrete ABI, graphics or ownership cause; diagnose it rather than weakening a gate or publishing the bootstrap demo.
 
 ## Current State
 - Baseline: b3239e85e8ffcc2ce1d4f9d3286922f6d1ac31ea; old Windows EXE 29,484,399 bytes. Existing primary/probe private identities and verified split-routing/DNS behavior are available for reuse.
-- Last evidence: run 39290112579 passes Linux (including race, 21 rendered frames and same-EXE smoke) and every native Windows tool/root suite plus vet, including exact process ownership and privacy checks. Packaging compiles the 18,227,200-byte EXE but its graceful GUI smoke times out without a ready report. Added safe fixed-stage/frame-count progress and bounded owned-picker cleanup to identify the actual stalled phase; no success criterion removed. Targeted UI/smoke race tests and Windows cross-build pass. Real saved-profile gate remains 58 requests/zero errors with no API/registration; master/rolling and user data/design/.venv are untouched.
+- Last evidence: runs 39290112579 and 39292099617 pass Linux and native Windows tools/core/vet. The corrected package now exits safely after a bounded 20-second native_ui_timeout instead of hanging for 180 seconds. Its actual 204 Gio frames, embedded resources, same-EXE engine and SOCKS pass; clipboard/import/picker proof remains incomplete. The final error overwrote its waiting phase, so retain a bounded safe stage history for the next diagnosis. No success criterion removed. Real saved-profile gate remains 58 requests/zero errors with no API/registration; master/rolling and user data/design/.venv are untouched.
 - Blocker: no external blocker. GitHub incident 8tzbpcnl75jp delays status updates, but jobs execute; actual logs expose actionable failures and determine the next correction.
 - Next: corrected canonical Go-only CI on migration branch; native smoke/footprint, then master/rolling delivery if all gates pass.
 

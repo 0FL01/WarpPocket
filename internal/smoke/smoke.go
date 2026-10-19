@@ -148,13 +148,23 @@ func Run(path string, wait bool) (result error) {
 	}
 	end := time.Now().Add(180 * time.Second)
 	stage := "window_start"
+	var stages []string
 	progress := func(next string, frames int) error {
+		// Keep the bounded sequence as well as the final error: a timeout must
+		// not erase the phase that was actually waiting. Stages contain only
+		// fixed probe labels/safe error codes, never clipboard or file contents.
+		if len(stages) == 0 || stages[len(stages)-1] != next {
+			if len(stages) < 24 {
+				stages = append(stages, next)
+			}
+		}
 		data, err := json.MarshalIndent(struct {
-			SchemaVersion int    `json:"schema_version"`
-			Mode          string `json:"mode"`
-			Stage         string `json:"stage"`
-			Frames        int    `json:"frames"`
-		}{1, report.Mode, next, frames}, "", "  ")
+			SchemaVersion int      `json:"schema_version"`
+			Mode          string   `json:"mode"`
+			Stage         string   `json:"stage"`
+			Frames        int      `json:"frames"`
+			Stages        []string `json:"stages"`
+		}{1, report.Mode, next, frames, stages}, "", "  ")
 		if err != nil {
 			return err
 		}
