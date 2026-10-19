@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"syscall"
 	"testing"
 	"time"
 	"unsafe"
@@ -20,9 +21,23 @@ var (
 	countHandlesProc  = processTestKernel.NewProc("GetProcessHandleCount")
 	handleInfoProc    = processTestKernel.NewProc("GetHandleInformation")
 	inJobProc         = processTestKernel.NewProc("IsProcessInJob")
+	consoleWindowProc = processTestKernel.NewProc("GetConsoleWindow")
 )
 
+func prepareTestDescendant(command *exec.Cmd) {
+	// A Go test binary is console-subsystem, unlike the shipped windowed EXE.
+	// Give its direct exec.Command descendant the same console-free behavior;
+	// DETACHED_PROCESS does not break inheritance of the parent's Job Object.
+	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.DETACHED_PROCESS}
+}
+
 func platformHelper(mode string, args []string) (int, bool) {
+	if mode == "listener" {
+		if window, _, _ := consoleWindowProc.Call(); window != 0 {
+			return 95, true
+		}
+		return 0, false
+	}
 	if mode != "windows-inheritance" {
 		return 0, false
 	}

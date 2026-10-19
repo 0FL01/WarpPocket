@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 
 func platformHelper(string, []string) (int, bool) { return 0, false }
 func ignoreTermination()                          { signal.Ignore(syscall.SIGTERM) }
+func prepareTestDescendant(*exec.Cmd)             {}
 
 func running(pid int) bool {
 	if unix.Kill(pid, 0) != nil {

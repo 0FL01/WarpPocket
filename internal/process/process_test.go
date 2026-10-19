@@ -89,6 +89,7 @@ func runHelper(mode string, args []string) int {
 	case "tree", "orphan":
 		executable, _ := os.Executable()
 		child := exec.Command(executable, helperMarker, "listener", args[0])
+		prepareTestDescendant(child)
 		if child.Start() != nil {
 			return 86
 		}

@@ -75,7 +75,7 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 
 ## Current Checkpoint
 - Closes: native Windows parity portions of R1–R4 and measured R5 footprint.
-- Smallest next action: confirm native root process/privacy tests after applying console-detached launch consistently and replacing the DACL test's presentation-dependent SDDL matching with exact structural control/ACE/mask/SID checks; then inspect real clipboard/profile import/picker/same-EXE crash smoke and all-process measurements.
+- Smallest next action: confirm the inherited-descendant fixture also launches console-free, retaining exact leader/child job counts and kill-on-close assertions; then inspect real clipboard/profile import/picker/same-EXE crash smoke and all-process measurements. Native structural privacy tests already pass.
 - Expected evidence: successful Linux/Windows Go tests and native packaged smoke plus safe footprint comparison. Only then deliver master and compare its sole rolling EXE asset with the tested artifact.
 - Replan if: an observed native failure exposes a concrete ABI, graphics or ownership cause; diagnose it rather than weakening a gate or publishing the bootstrap demo.
 
@@ -100,6 +100,7 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 - 2026-10-19: de4b409 published the Go-only migration branch; Linux canonical CI passed. Remaining observed native payload-line-ending and synthetic readiness failures addressed without dropping tests or weakening digest/working-set requirements; rerun native CI next.
 - 2026-10-19: native structured process identities disproved an engine-readiness explanation for the count mismatch and identified two hidden console hosts. Detached launch added; native owner-crash/count checks are retained for the next run.
 - 2026-10-19: run 39288553889 passed native tool tests and reached all application suites. Root launch aligned with detached/NUL-only ownership; DACL oracle now checks the binary descriptor rather than platform-specific SDDL presentation, retaining strict privacy and rejection cases. Native root and packaged gates next.
+- 2026-10-19: run 39289496891 passes every native application package except the tree fixture's exact count: detached leader plus exec.Command's console-subsystem child still yielded three processes. Launch the test descendant detached too, assert it has no console window, and keep job inheritance/exact two-process checks. Native storage/DACL suite is green.
 
 ## Completion
 - Pending required outcomes; no migration completion claim yet.
