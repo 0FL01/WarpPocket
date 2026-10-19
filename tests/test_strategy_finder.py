@@ -2,9 +2,10 @@ import threading
 import time
 import unittest
 from base64 import b64encode
+from unittest.mock import Mock
 
 from warppocket.models import AppError, Endpoint, Profile
-from warppocket.strategy_finder import StrategyFinder
+from warppocket.strategy_finder import StrategyFinder, _TrialBudget
 
 KEY = b64encode(b"\x01" * 32).decode("ascii")
 
@@ -77,6 +78,20 @@ class FinderTests(unittest.TestCase):
 
     def explicit(self, *endpoints):
         return [Endpoint.parse(item) for item in endpoints]
+
+    def test_budget_wait_rechecks_after_an_early_native_timeout(self):
+        cancel = threading.Event()
+        waits = []
+
+        def early_wait(timeout):
+            waits.append(timeout)
+            self.clock.value = 90.0 if len(waits) == 1 else 180.0
+            return False
+
+        cancel.wait = Mock(side_effect=early_wait)
+        with _TrialBudget(self.backend, cancel, 180, self.clock) as budget:
+            self.assertTrue(budget.wait(200))
+        self.assertEqual(waits, [180.0, 90.0])
 
     def test_deadline_interrupts_an_inflight_trial_not_just_the_next_candidate(self):
         def slow_health(port, cancel=None):

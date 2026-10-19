@@ -66,9 +66,17 @@ class _TrialBudget:
         self.cancel.set()
 
     def wait(self, timeout=None):
-        remaining = max(0, self.deadline - self.clock())
-        self.cancel.wait(remaining if timeout is None else min(timeout, remaining))
-        return self.is_set()
+        deadline = self.deadline
+        if timeout is not None:
+            deadline = min(deadline, self.clock() + max(0, timeout))
+        while not self.is_set():
+            remaining = deadline - self.clock()
+            if remaining <= 0:
+                return self.is_set()
+            # Native waits can time out slightly early (notably on Windows).
+            # Do not report a false timeout before the requested budget ends.
+            self.cancel.wait(remaining)
+        return True
 
     def watch(self, instance):
         with self._lock:

@@ -326,6 +326,14 @@ class DriverTests(TemporaryTests):
                 self.assertTrue(process.closed)
         return code, result
 
+    def test_freshness_uses_filesystem_clock_not_precise_wall_clock(self):
+        # NTFS metadata can lag GetSystemTimePreciseAsFileTime even for a file
+        # just created by this launch. Compare filesystem timestamps instead.
+        with mock.patch.object(smoke.time, "time_ns", return_value=2**63 - 1):
+            code, result = self.run_driver()
+        self.assertEqual(code, 0, result["error_code"])
+        self.assertTrue(result["ok"])
+
     def test_success_kills_only_gui_and_retains_handles_until_verification(self):
         # Both phases must remove stale reports instead of accepting them.
         for name in ("graceful.json", "wait.json"):

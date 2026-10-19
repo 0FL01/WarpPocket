@@ -24,13 +24,13 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
   - Acceptance: successful strategies persist; background search never replaces the primary; all owned processes stop on cancel/close.
   - Primary evidence: finder/controller/UI tests and runtime smoke.
   - Status: verified
-  - Evidence: bounded sequential finder (30 candidates / 180 s deadline, probe-only while connected, active tunnel untouched), cancellation-safe controller with operation ids, mandatory ensure_reserved for primary/probe, and Tk UI implemented. Commit 215fac3 and Actions run 39237908290 verified the initial GUI. Packaging work reproduced and fixed missing consent prompts, cancel/late-result persistence, disconnect/reconnect ownership and stale monitor races; the deadline now interrupts the in-flight trial. Current local full suite: 147 tests OK (3 Windows-only skips), including real GUI/helper smoke.
+  - Evidence: bounded sequential finder (30 candidates / 180 s deadline, probe-only while connected, active tunnel untouched), cancellation-safe controller with operation ids, mandatory ensure_reserved for primary/probe, and Tk UI implemented. Commit 215fac3 and Actions run 39237908290 verified the initial GUI. Packaging work reproduced and fixed missing consent prompts, cancel/late-result persistence, disconnect/reconnect ownership and stale monitor races; the deadline interrupts the in-flight trial. Current local full suite: 154 tests OK (3 Windows-only skips). Real controller gate reused both profiles without registration: primary 188.114.97.1:4500 unchanged, 21 HTTPS requests / 0 failures during a 15.33 s probe search, 1 saved result, maximum 2 helpers, profiles unchanged and cleanup verified (private controller-gate-2026-10-19.json).
 - R3: Windows onefile build, offline packaged smoke, documentation and Windows 10 acceptance.
   - Source: reviewed plan step 9 and done criteria.
   - Acceptance: Actions builds standalone EXE with the patched helper; offline smoke verifies resources and helper lifecycle; clean Windows 10 acceptance recorded separately.
   - Primary evidence: GitHub Actions and explicit Windows 10/VM test.
   - Status: in_progress
-  - Evidence: native PyInstaller spec and Windows packaging workflow implemented; offline GUI/helper smoke passes locally. Packaged artifact and crash verification require the next Actions run. Clean Windows 10 acceptance remains unverified.
+  - Evidence: native PyInstaller spec and Windows packaging workflow implemented; offline GUI/helper smoke passes locally. First run 39240731907 passed Linux but failed Windows on filesystem-vs-wall-clock timestamp precision and an early native wait timeout. Both causes were reproduced locally and fixed without weakening freshness/deadline checks; the next native run must confirm them before packaging. Clean Windows 10 acceptance remains unverified.
 - R4: Commit and push the verified deliverable to git@github.com:0FL01/WarpPocket.git and inspect Actions.
   - Source: latest user implementation request.
   - Acceptance: commit exists on origin; Actions result or concrete blocker reported.
@@ -63,7 +63,7 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 
 ## Current State
 - Resolved: R1 verified (reserved root cause fixed; patched helper built from pinned sources; opt-in gate passed locally). Vendor pipeline builds the patched helper in CI.
-- Last relevant evidence: 147 offline tests pass (3 Windows-only skips) locally, including real application smoke. Previous native CI run: 39237908290. Current packaged build has not yet run in Actions.
+- Last relevant evidence: 154 offline tests pass (3 Windows-only skips) locally, including real application smoke. Real controller network gate passed with 21 primary requests / 0 failures during probe search. Commit c59f13d is on origin; first native run 39240731907 exposed clock-resolution failures, now reproduced and fixed locally. Packaged build still awaits the corrected native gate.
 - Blocker: no local implementation blocker. Clean Windows 10 acceptance still needs an actual OS/VM; this Linux host exposes no virsh, QEMU, VirtualBox, Wine or PowerShell tools. Native Server 2022 CI is the available independent packaged test, not Windows 10 acceptance.
 - Next: R3 native packaged smoke and artifact, then record the remaining Windows 10 dependency separately.
 
@@ -98,6 +98,7 @@ Operational notes: `engage.cloudflareclient.com:2408` consistently times out in 
 - 2026-10-19: opt-in gate passed locally; reserved-support change set committed/pushed with Actions verification.
 - 2026-10-19: R2 verified: finder/controller/Tk UI implemented with 103 tests, live UI smoke and CI (Xvfb + native Windows) green; goal updated for R3.
 - 2026-10-19: R3 implementation added with real GUI smoke, pinned PyInstaller spec, native crash-driver tests and artifact workflow. Reproduced R2 consent/cancellation/ownership/deadline regressions fixed; local full suite 147 tests OK. Native packaged CI is next.
+- 2026-10-19: first native CI exposed timestamp-clock mismatch and early timeout; deterministic regressions and fixes added (154 tests OK). Real controller/probe network gate passed without new registration; native CI retry is next.
 
 ## Completion
 - Resolved outcomes: R1 verified; R2 verified; R4 verified. R3 in progress (packaging); Windows 10 acceptance outstanding.

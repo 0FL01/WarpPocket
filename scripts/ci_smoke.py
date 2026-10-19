@@ -408,6 +408,19 @@ def _snapshot(report: Report) -> dict:
             "checks": {name: report.checks[name] for name in sorted(report.checks)}}
 
 
+def _filesystem_timestamp(directory: Path) -> int:
+    # Windows' precise wall clock and filesystem metadata do not necessarily
+    # advance together. Use a closed marker on the same filesystem, preserving
+    # the strict stale-report check without falsely rejecting a fresh report.
+    fd, name = tempfile.mkstemp(prefix=".launch-", dir=directory)
+    os.close(fd)
+    marker = Path(name)
+    try:
+        return marker.stat().st_mtime_ns
+    finally:
+        marker.unlink()
+
+
 def _run_checks(copied, out, cwd, native, result, launches, handles, workspaces, timeouts):
     for mode, option, filename, key in (
         ("graceful", "--smoke", "graceful.json", "graceful"),
@@ -415,7 +428,7 @@ def _run_checks(copied, out, cwd, native, result, launches, handles, workspaces,
     ):
         path = out / filename
         path.unlink(missing_ok=True)
-        started_ns = time.time_ns()
+        started_ns = _filesystem_timestamp(out)
         launch = native.launch([str(copied), option, str(path)], cwd)
         launches.append(launch)
         phase = result[key] = {"ok": False, "launcher_pid": launch.process.pid}
