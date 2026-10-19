@@ -36,13 +36,13 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
   - Acceptance: light one-window vertical Crayon layout, actual OS titlebar, status/help, read-only SOCKS address/copy feedback, two large action buttons, truthful progress, endpoint/notices/footer and Settings menu. Checkbox-gated consent, native import, diagnostics/terms/licenses, keyboard and DPI handling. Real controller snapshots, no simulated endpoints/timers/auto-connect search. Workers never mutate widget state; picker does not deadlock shutdown.
   - Primary evidence: UI/input/layout tests, Cyrillic and 100/125/150% layouts, actual Windows Gio frame/clipboard/dialog lifecycle checks and packaged smoke.
   - Status: in_progress
-  - Evidence: real Crayon Gio window, native input/clipboard-command/consent/progress tests and 21 rendered state/DPI frames pass locally; early Windows frames verified. Full Windows clipboard/native picker shutdown and final same-EXE smoke are next.
+  - Evidence: real Crayon Gio window, native input/clipboard-command/consent/progress tests and 21 rendered state/DPI frames pass locally; early Windows frames verified. Full smoke includes real Windows clipboard roundtrip, selection/import of an owned Unicode-name profile, then a second picker and deferred main-window close/cancellation. Those native Windows integration checks still await a passing run. Local same-EXE smoke passes under X11; an isolated minimal Gio window reproduced this host's Wayland EGL hang, so no application/ownership guard was weakened to bypass it.
 - R5: Go-only delivery, tested EXE-only rolling release and measured footprint.
   - Source: approved migration plan stages 7–8; user requires Go stack, one lighter binary and existing automatic releases.
   - Acceptance: no runtime Python or Python build/release invocation; Linux/Windows Go CI, native policy and packaged same-EXE smoke pass. Master-only success-gated serialized rolling publication preserves stale-build/draft safeguards and attaches only matching WarpPocket.exe. Record actual EXE size/startup/all-process working-set comparison with the prior 29,484,399-byte build; do not invent a size or GPU compatibility claim. README describes new Go commands/limits.
   - Primary evidence: workflow and tool tests; downloaded release compared with the same-run tested artifact; measured baseline/new footprint; source/dependency inspection.
   - Status: in_progress
-  - Evidence: independent Go preparation/smoke/publisher tools and policy tests pass, including races and Windows cross-compilation. New EXE cross-build measured at 18,199,552 bytes vs 29,484,399-byte baseline before final smoke additions; no startup/working-set claim yet. Runtime Python removal and production Go workflow/publication wait for native parity.
+  - Evidence: independent Go preparation/smoke/publisher tools and local policy/race tests pass. Final Windows CGO-disabled cross-build is 18,221,568 bytes vs 29,484,399-byte baseline; startup/all-process working set remain unmeasured until native CI. Superseded Python runtime/build/publication and tests have been ported/removed on the isolated migration branch; canonical CI and release are Go-only, but master/rolling are deliberately unchanged until native parity. First full native run 39282304288 passed Linux but exposed non-canonical paths in portable smoke fixtures on Windows; reproduced using a local output-path alias and fixed in fixtures without relaxing containment checks. Native retry is required.
 
 ### Constraints
 - Breaking changes to implementation/public internal APIs are approved. Do not silently destroy or migrate private user identities; preserve profiles/accounts/import safety and cache compatibility described below.
@@ -60,7 +60,7 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 
 ## Change Envelope
 - Root go.mod/go.sum; cmd/warppocket; internal model/storage/profile/process/backend/health/finder/controller/ui/smoke/resources; independent tools module with prepare/smoke/release commands and tests; moved embedded Go patch/test payloads; vendor metadata/licenses; Go/Python tests; workflow; README and this goal.
-- Remove superseded Python runtime, non-test Python build/publication scripts, PyInstaller spec/runtime requirements/pyproject after Go parity is verified. The design reference is read-only input, not a new embedded browser stack.
+- Remove superseded Python runtime, non-test Python build/publication scripts, PyInstaller spec/runtime requirements/pyproject after local Go parity is verified on the isolated migration branch; require full native parity before master delivery. The design reference is read-only input, not a new embedded browser stack.
 - Go 1.26.9; Gio and Gio extensions v0.10.3; existing pinned wireproxy/WireGuard sources and hash verification. Native source copies under ignored build/deps, never patched global Go module cache. Only narrow TOML/uTLS/native API dependencies justified by the approved port.
 
 ## Copied Implementation Plan
@@ -75,24 +75,26 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 
 ## Current Checkpoint
 - Closes: native Windows parity portions of R1–R4 and measured R5 footprint.
-- Smallest next action: push the integrated Go application/tools to the migration branch and inspect native Windows storage/process tests, real GUI/clipboard/picker/same-EXE crash smoke and all-process measurements against the pinned old EXE.
-- Expected evidence: successful Linux/Windows Go tests and native packaged smoke; safe footprint comparison. Then remove superseded Python runtime/build/publication and switch production CI before master delivery.
+- Smallest next action: push the Go-only retirement/canonical workflow and corrected smoke path fixtures to the migration branch; inspect native Windows storage/process tests, real clipboard/profile import/picker/same-EXE crash smoke and all-process measurements against the pinned old EXE.
+- Expected evidence: successful Linux/Windows Go tests and native packaged smoke plus safe footprint comparison. Only then deliver master and compare its sole rolling EXE asset with the tested artifact.
 - Replan if: an observed native failure exposes a concrete ABI, graphics or ownership cause; diagnose it rather than weakening a gate or publishing the bootstrap demo.
 
 ## Current State
 - Baseline: b3239e85e8ffcc2ce1d4f9d3286922f6d1ac31ea; old Windows EXE 29,484,399 bytes. Existing primary/probe private identities and verified split-routing/DNS behavior are available for reuse.
-- Last evidence: Go-only same-EXE Linux smoke, all root/tool race tests and real existing-profile network gate pass. Native UI state/input tests and rendered 100/125/150% layouts pass; Windows pure-Go full-app cross-build succeeds. Early Windows Gio frame gate passed; full integration is isolated on the migration branch, not published as finished software. All delegated workstreams completed and reviewed.
-- Blocker: none.
-- Next: integrated native Go parity/footprint gate, then runtime Python removal and EXE-only master rolling delivery.
+- Last evidence: all root/tool race tests and vet pass; freshly prepared DNS/routing/sandbox/worker gates pass after old source-payload removal; 21 native rendered state/DPI frames and real X11 same-EXE smoke pass. Real saved-profile network gate remains 58 requests/zero errors with no API/registration. Full Windows cross-build succeeds. The first native full run passed Linux; Windows fixture path-alias failure is locally reproduced and corrected, not treated as an external blocker. Owned temporary diagnostics/failed synthetic smoke workspaces removed; user data/design/.venv untouched.
+- Blocker: no established local blocker. GitHub reports critical Actions/Pages/Webhooks degradation (incident 8tzbpcnl75jp, 2026-10-19 15:49 UTC), delaying queue/result updates; the observed Windows test failure remains actionable and a corrected native retry is required.
+- Next: corrected canonical Go-only CI on migration branch; native smoke/footprint, then master/rolling delivery if all gates pass.
 
 ## Material Decisions
 - 2026-10-19: latest user permits breaking changes and Python tests only; runtime/build/publication move to Go. Self-worker architecture preserves isolation without shipping helper executables. Smaller/lighter is measured, not assumed from language alone.
 - 2026-10-19: Crayon light HANDOFF/CSS/mockups take precedence over stale dark design-system text. No preview demo behavior is part of the product.
+- 2026-10-19: retire the old runtime only on the isolated migration branch after local Go parity; do not merge or replace the verified rolling EXE until the native Windows/core/GUI/lifecycle and footprint gates pass.
 
 ## Checkpoint History
 - 2026-10-19: approved plan copied here with the latest Python-tests-only amendment; implementation begins.
 - 2026-10-19: shared Go values and initial real Gio layout/frame gate implemented; Linux native frames and Windows pure-Go cross-build pass. Native Windows execution next, before full integration.
 - 2026-10-19: early native Windows frames verified (39274301008); core Go storage/API/process/controller/UI and isolated preparation integrated. Real Go network acceptance passed without API/registration, with 58 uninterrupted primary HTTPS requests during probe and transport/cleanup proof. Full Windows native integration and measured comparison are next.
+- 2026-10-19: Go-only source/tools/CI retirement and local closure gates pass. Native Windows tool-fixture alias failure reproduced/fixed without changing validation; X11 smoke passes after isolating a compositor-only EGL hang. Corrected native pipeline and measured Windows acceptance remain mandatory before master publication.
 
 ## Completion
 - Pending required outcomes; no migration completion claim yet.

@@ -9,8 +9,11 @@ The adjacent license files are verbatim upstream notices:
   WarpPocket's static endpoint/port lists are derived from `warp-finder/` at
   this revision, not from a moving branch or remote runtime configuration.
 
-`../manifest.json` records the exact notice source URLs and helper release
-artifacts. SHA-256 values for wireproxy describe the downloaded `.tar.gz`,
-not the extracted executable. Downloaded helper binaries are not tracked.
-Distributions containing the helpers or derived static lists must retain
-these notices.
+`../wireproxy-build.json` pins the wireproxy source archive and WireGuard module.
+Go preparation verifies the source digest and patches isolated copies under
+`build/deps`, not the global module cache. No standalone wireproxy/wgcf executable
+is shipped: the engine runs from WarpPocket's own EXE, and the native WARP API
+retains the wgcf protocol/TLS behavior. Distributions containing derived code or
+lists retain these notices. The application's embedded
+`internal/resources/licenses.txt` also includes Gio, dependencies, fonts, CA data
+and Go standard-library notices; it is accessible from the Settings menu.

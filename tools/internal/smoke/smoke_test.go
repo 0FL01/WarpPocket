@@ -110,7 +110,7 @@ func (f *fakePlatform) Launch(argv []string, cwd string) (Launch, error) {
 	launch.gui = &fakeProcess{native: f, launch: launch, pid: fakeGUI, live: mode == "wait" || f.gracefulHangs, code: f.gracefulCode}
 	launch.child = &fakeProcess{native: f, launch: launch, pid: fakeChild, live: mode == "wait" && !f.childAlreadyDead}
 	f.launches = append(f.launches, launch)
-	workspace := filepath.Join(f.options.Output, "runtime-"+mode)
+	workspace := filepath.Join(filepath.Dir(argv[2]), "runtime-"+mode)
 	if os.MkdirAll(workspace, 0o700) != nil || os.WriteFile(filepath.Join(workspace, "owned.conf"), []byte("synthetic; never read by driver"), 0o600) != nil {
 		f.t.Fatal("create workspace fixture")
 	}
@@ -289,7 +289,8 @@ func (f *fakePlatform) run(ctx context.Context) Summary {
 func summaryCode(t *testing.T, summary Summary, expected string) {
 	t.Helper()
 	if summary.OK || summary.ErrorCode == nil || *summary.ErrorCode != expected {
-		t.Fatalf("summary = %+v, want failure %s", summary, expected)
+		encoded, _ := json.Marshal(summary)
+		t.Fatalf("summary = %s, want failure %s", encoded, expected)
 	}
 }
 
@@ -314,7 +315,8 @@ func TestDriverSuccessUsesExactPIDAndGUIOnlyProofBeforeClosingJob(t *testing.T) 
 	}
 	summary := fake.run(context.Background())
 	if !summary.OK || summary.ExitStatus() != 0 || !summary.Graceful.OK || !summary.ForcedKill.OK || !summary.Cleanup.OK {
-		t.Fatalf("unexpected failure: %+v", summary)
+		encoded, _ := json.Marshal(summary)
+		t.Fatalf("unexpected failure: %s", encoded)
 	}
 	if summary.ForcedKill.PID != fakeGUI || !summary.ForcedKill.EngineStopped || !summary.ForcedKill.PortClosed || !summary.ForcedKill.GUIOnlyTermination {
 		t.Fatal("ownership proof incomplete")
@@ -352,6 +354,24 @@ func TestDriverSuccessUsesExactPIDAndGUIOnlyProofBeforeClosingJob(t *testing.T) 
 	}
 	if copied, err := os.ReadFile(filepath.Join(fake.options.Output, filepath.FromSlash(copyName))); err != nil || string(copied) != "synthetic executable fixture" {
 		t.Fatal("copied executable was not preserved")
+	}
+}
+
+// Windows temp paths can be short-name aliases, while the launch arguments use
+// the canonical output root. A fake application must derive its workspace from
+// the report path actually passed to it, just like the shipped application.
+func TestDriverApplicationUsesCanonicalReportDirectory(t *testing.T) {
+	fake := newFake(t)
+	root := filepath.Dir(fake.options.Output)
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Skip("creating Windows symlinks requires Developer Mode or privilege")
+	}
+	fake.options.Output = filepath.Join(alias, "out")
+	summary := fake.run(context.Background())
+	if !summary.OK {
+		encoded, _ := json.Marshal(summary)
+		t.Fatalf("canonical launch/report directory diverged: %s", encoded)
 	}
 }
 
@@ -482,7 +502,11 @@ func TestWorkingDirectoryAndForeignWorkspaceSafety(t *testing.T) {
 	if os.MkdirAll(victim, 0o700) != nil || os.WriteFile(filepath.Join(victim, "keep"), []byte("foreign"), 0o600) != nil {
 		t.Fatal("create existing runtime fixture")
 	}
-	fake.mutate["wait"] = func(data map[string]any) { data["workspace"] = victim }
+	canonicalVictim, err := filepath.EvalSymlinks(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.mutate["wait"] = func(data map[string]any) { data["workspace"] = canonicalVictim }
 	summaryCode(t, fake.run(context.Background()), "workspace_not_new")
 	if _, err := os.Stat(filepath.Join(victim, "keep")); err != nil {
 		t.Fatal("preexisting in-output runtime directory was deleted")

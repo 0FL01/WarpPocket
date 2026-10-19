@@ -1,8 +1,7 @@
-name: Verification
+name: Go verification and rolling release
 
 on:
   push:
-    branches: [master]
   pull_request:
   workflow_dispatch:
 
@@ -11,55 +10,53 @@ permissions:
 
 jobs:
   tests:
-    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    name: Go tests / ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-24.04
-            python: '3.12.15'
-            platform: linux-amd64
-          - os: ubuntu-24.04
-            python: '3.13.16'
-            platform: linux-amd64
-          - os: windows-2022
-            python: '3.13.16'
-            platform: windows-amd64
+        os: [ubuntu-24.04, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    env:
-      PYTHONPATH: src
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ matrix.python }}
-          architecture: x64
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.9'
           cache: false
-      - name: Install locked runtime dependencies
-        run: python -m pip install --require-hashes -r requirements.txt
-      - name: Build wireproxy from pinned sources
-        run: python scripts/build_wireproxy.py --platform ${{ matrix.platform }}
-      - name: Fetch and verify real helpers
-        run: python scripts/fetch_vendor.py --platform ${{ matrix.platform }}
-      - name: Offline tests including real helper lifecycle
-        run: python -m unittest discover -s tests -v
-      - name: Install Xvfb
+      - name: Install native Linux graphics dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb
-      - name: UI and application smoke tests under Xvfb
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libxfixes-dev libvulkan-dev xvfb
+      - name: Go preparation and delivery tool tests
+        run: go -C tools test -mod=readonly -count=1 ./...
+      - name: Prepare pinned sources and require native engine policy gates
+        run: go -C tools run -mod=readonly ./cmd/prepare
+      - name: Native Go application tests
+        run: go test -mod=readonly -count=1 ./...
+      - name: Go vet
+        run: go vet -mod=readonly ./...
+      - name: Linux race tests
         if: runner.os == 'Linux'
         run: |
-          xvfb-run -a python -m unittest discover -s tests -p 'test_ui.py' -v
-          xvfb-run -a python -m unittest discover -s tests -p 'test_smoke.py' -v
+          go test -mod=readonly -race ./...
+          go -C tools test -mod=readonly -race ./...
+      - name: Native Crayon rendering at 100 / 125 / 150 percent
+        if: runner.os == 'Linux'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          WARPPOCKET_SCREENSHOTS: ${{ github.workspace }}/build/ui-screenshots
+        run: xvfb-run -a go test -mod=readonly -tags guirender ./internal/ui -run TestRenderedCrayonStatesAndDPI -count=1
+      - name: Linux same-EXE engine and actual Gio window smoke
+        if: runner.os == 'Linux'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          go build -mod=readonly -trimpath -ldflags='-s -w' -o build/warppocket-go ./cmd/warppocket
+          xvfb-run -a build/warppocket-go --smoke build/go-smoke-linux/graceful.json
 
   package:
-    name: Windows onefile package
+    name: Native Go Windows package
     needs: tests
     runs-on: windows-2022
     timeout-minutes: 30
@@ -67,36 +64,33 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.13.16'
-          architecture: x64
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.9'
           cache: false
-      - name: Install locked build dependencies
-        run: python -m pip install --require-hashes -r requirements-build.txt
-      - name: Build patched wireproxy from pinned sources
-        run: python scripts/build_wireproxy.py --platform windows-amd64
-      - name: Fetch and verify wgcf
-        run: python scripts/fetch_vendor.py --platform windows-amd64
-      - name: Build standalone windowed executable
-        run: python -m PyInstaller --noconfirm --clean packaging/WarpPocket.spec
-      - name: Packaged smoke (normal close and inner GUI crash)
-        run: python scripts/ci_smoke.py --exe dist/WarpPocket.exe --out build/smoke
-      - name: Upload executable for release publication
+      - name: Prepare pinned engine sources and native policy tests
+        run: go -C tools run -mod=readonly ./cmd/prepare
+      - name: Build the only shipped executable
+        env:
+          CGO_ENABLED: '0'
+        run: go build -mod=readonly -trimpath -ldflags="-s -w -H windowsgui" -o dist/WarpPocket.exe ./cmd/warppocket
+      - name: Real Gio, native clipboard/picker, same-EXE ownership and crash proof
+        run: go -C tools run -mod=readonly ./cmd/smoke --exe ../dist/WarpPocket.exe --out ../build/go-smoke --source-root ..
+      - name: Measure against the pinned pre-migration executable
+        if: github.ref == 'refs/heads/go-gio-migration'
+        run: go -C tools run -mod=readonly ./cmd/footprint --current-report ../build/go-smoke/summary.json --out ../build/go-smoke/footprint-comparison.json
+      - name: Upload the tested executable
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: WarpPocket-windows-x64
           path: dist/WarpPocket.exe
           if-no-files-found: error
-      - name: Upload safe smoke reports
+      - name: Upload safe native evidence only
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: WarpPocket-packaged-smoke
-          path: build/smoke/*.json
+          name: WarpPocket-go-smoke
+          path: build/go-smoke/*.json
           if-no-files-found: warn
 
   release:
@@ -115,15 +109,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          python-version: '3.13.16'
-          architecture: x64
+          go-version: '1.26.9'
+          cache: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: WarpPocket-windows-x64
           path: build/release
-      - name: Publish only WarpPocket.exe
-        run: python scripts/publish_rolling.py --exe build/release/WarpPocket.exe
+      - name: Publish only the tested native executable
+        run: go -C tools run -mod=readonly ./cmd/release --exe ../build/release/WarpPocket.exe
         env:
           GITHUB_TOKEN: ${{ github.token }}

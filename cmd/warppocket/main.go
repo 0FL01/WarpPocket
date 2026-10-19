@@ -8,12 +8,18 @@ import (
 	"gioui.org/app"
 	"github.com/0FL01/WarpPocket/internal/application"
 	"github.com/0FL01/WarpPocket/internal/engine"
+	"github.com/0FL01/WarpPocket/internal/model"
 	"github.com/0FL01/WarpPocket/internal/resources"
 	"github.com/0FL01/WarpPocket/internal/smoke"
 	"github.com/0FL01/WarpPocket/internal/ui"
 )
 
-func main() {
+type options struct {
+	engine                                    bool
+	role, config, dataDir, report, waitReport string
+}
+
+func parse(args []string) (options, error) {
 	flags := flag.NewFlagSet("WarpPocket", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	engineMode := flags.Bool("engine", false, "private self-worker mode")
@@ -22,24 +28,37 @@ func main() {
 	dataDir := flags.String("data-dir", "", "private data directory")
 	report := flags.String("smoke", "", "offline GUI/engine smoke report")
 	waitReport := flags.String("smoke-wait", "", "offline GUI crash-test ready report")
-	if flags.Parse(os.Args[1:]) != nil || flags.NArg() != 0 {
-		os.Exit(2)
+	invalid := func() (options, error) {
+		return options{}, model.E("invalid_options", "Недопустимые параметры запуска.")
+	}
+	if flags.Parse(args) != nil || flags.NArg() != 0 {
+		return invalid()
 	}
 	if *engineMode {
 		// Self-workers never initialize a window or take the GUI instance lock.
 		if *dataDir != "" || *report != "" || *waitReport != "" || *config == "" || *role == "" {
-			os.Exit(2)
+			return invalid()
 		}
-		if engine.Run(*config, *role) != nil {
+	} else if *role != "" || *config != "" || *report != "" && *waitReport != "" || *dataDir != "" && (*report != "" || *waitReport != "") {
+		return invalid()
+	}
+	return options{*engineMode, *role, *config, *dataDir, *report, *waitReport}, nil
+}
+
+func main() {
+	o, err := parse(os.Args[1:])
+	if err != nil {
+		os.Exit(2)
+	}
+	if o.engine {
+		// Fixed worker dispatch precedes app.Main, GUI locks and window creation.
+		if engine.Run(o.config, o.role) != nil {
 			os.Exit(1)
 		}
 		return
 	}
-	if *role != "" || *config != "" || *report != "" && *waitReport != "" || *dataDir != "" && (*report != "" || *waitReport != "") {
-		os.Exit(2)
-	}
 	go func() {
-		os.Exit(run(*dataDir, *report, *waitReport))
+		os.Exit(run(o.dataDir, o.report, o.waitReport))
 	}()
 	app.Main()
 }

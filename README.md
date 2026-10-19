@@ -1,16 +1,16 @@
 # WarpPocket
 
-Небольшой SOCKS5-клиент Cloudflare WARP для выбранных приложений. Целевой результат — один Windows EXE с Tkinter-интерфейсом, без драйверов и прав администратора.
+Небольшой SOCKS5-клиент Cloudflare WARP для выбранных приложений: **один нативный Windows EXE на Go с Gio UI**, без установки Python, WireGuard, драйверов или прав администратора.
 
-## Текущее состояние
+## Архитектура
 
-Реализованы **headless-ядро и приложение**: приватные профили и кеш, безопасный импорт, управляемые процессы, backend wireproxy, реальные HTTPS-проверки, ограниченный последовательный поиск стратегий, контроллер состояния и Tkinter-интерфейс. Обязательный сетевой gate **пройден локально 2026-10-19**. Windows onefile-сборка и проверка готового EXE **прошли CI**; приёмка на чистой Windows 10 ещё не выполнена. Текущее состояние и доказательства записаны в [execution contract](docs/goals/2026-10-18-warppocket-mvp.md); исходное предложение — [docs/origin.md](docs/origin.md).
+Backend, GUI, WARP API, подготовка исходников, smoke и публикация написаны на Go. Python/Tkinter/PyInstaller, отдельные `wireproxy.exe`/`wgcf.exe`, WebView и извлечение helpers не используются. Светлый Crayon-интерфейс нарисован средствами Gio; шрифты с кириллицей, CA-сертификаты и лицензии встроены в EXE.
 
-Причина прежних таймаутов: Cloudflare WARP требует 3 байта `reserved` (24-битный client id) в WireGuard-сообщениях; `wgcf` их не пишет, а upstream `wireproxy` не поддерживает. Патченная сборка helper'а (`scripts/build_wireproxy.py`) добавляет `reserved` в исходящие пакеты и очищает зеркалированное сервером поле во входящих; это подтверждено контрольным экспериментом с `sing-box` на том же профиле и endpoint.
+**Один файл не означает один процесс.** GUI запускает собственный EXE в закрытом режиме `--engine`: один primary и не более одной последовательной probe-проверки. На Windows workers принадлежат Job Objects с kill-on-close, назначенным атомарно при создании; на Linux используются отдельные process groups. Это сохраняет очистку при закрытии и аварии GUI без извлекаемых бинарников.
 
-Gate прошёл: primary на `188.114.96.1:4500` (417 мс), после полной остановки другой endpoint `188.114.97.1:4500` (327 мс), повторное использование сохранённого профиля без регистрации, отдельный probe при непрерывных запросах primary (6 запросов, 0 сбоев) без изменений PID/порта/профиля, cleanup подтверждён. `engage.cloudflareclient.com:2408` в тестовых сетях стабильно таймаутит; рабочие кандидаты — `188.114.9x.1:4500`.
+Сетевое ядро — закреплённые исходники wireproxy/WireGuard с патчами `reserved-support+ordered-dns+split-routing`. WARP `Reserved` подставляется в исходящие сообщения; зеркалированное сервером поле очищается перед разбором входящих. GUI не меняет маршруты, DNS, firewall или глобальный прокси ОС.
 
-GitHub Actions собирает патченный helper (Go 1.26) на Linux и Windows и прогоняет полный набор Python-тестов с платформенными skips; на Windows выполняются настоящие Job Object owner-crash/handle tests, DACL test и offline smoke helper'а. Первоначальная публикация rolling-релиза подтверждена [run 39246480555](https://github.com/0FL01/WarpPocket/actions/runs/39246480555), коммит `7f71a58`: все пять jobs зелёные, включая packaging, проверку штатного закрытия и аварийного завершения внутреннего GUI-процесса и публикацию единственного EXE в Releases. После успешных проверок каждого push в `master` этот же rolling-релиз обновляется автоматически. CI на Windows Server 2022 не заменяет приёмку на Windows 10.
+План миграции и проверяемые результаты: [Go/Gio goal](docs/goals/2026-10-19-warppocket-go-gio.md). Реальный Go network gate переиспользовал существующие профили: 58 HTTPS-запросов без обрыва во время 15-секундного probe-поиска, один primary-stream, максимум два engine-workers; DIRECT/IP-only маршрутизация, неизменность профилей и cleanup подтверждены. Нативный Windows CI проверяет работу на Server 2022, а не удостоверяет отдельную приёмку на чистой Windows 10.
 
 Не считать открытый SOCKS-порт доказательством подключения: проверка требует `warp=on/plus` и независимого HTTPS-ресурса. Это не системный VPN и не гарантия обхода DPI.
 
@@ -26,83 +26,78 @@ GitHub Actions собирает патченный helper (Go 1.26) на Linux �
 
 ### Из исходников
 
-Приложение — то же ядро плюс Tkinter-интерфейс: подключение/отключение, копирование адреса SOCKS5, «Найти новую стратегию» без разрыва активного туннеля, импорт основного/проверочного профиля и просмотр диагностики.
+После подготовки и сборки из раздела ниже:
 
 ```sh
-PYTHONPATH=src .venv/bin/python -m warppocket --data-dir "$HOME/.local/share/warppocket-e2e"
+build/warppocket-go --data-dir "$HOME/.local/share/warppocket-e2e"
 ```
 
 Без `--data-dir` используется системный каталог данных. Согласие с условиями Cloudflare запрашивается в интерфейсе перед первой регистрацией. Для поиска при активном подключении нужен отдельный профиль `probe`: приложение объясняет это отдельно и регистрирует вторую идентичность только после подтверждения.
 
-Поиск проверяет не больше 30 кандидатов за 180 секунд и не переключает активное соединение. Лучший результат сохраняется для следующего подключения; при нём endpoint заново проверяется основным профилем. Кнопка «Отмена» отменяет подключение; «Отключиться» доступна и во время фонового поиска.
+Поиск проверяет не больше 30 кандидатов за 180 секунд и не переключает активное соединение. Лучший результат сохраняется для следующего подключения; при нём endpoint заново проверяется основным профилем. «Отменить» отменяет подключение; «Отключиться» доступна и во время фонового поиска. Без подключения поиск последовательно использует существующий primary-профиль. Ошибка записи кеша показывается отдельно и не выдаётся за успешное сохранение.
 
 ## Разработка
 
-Python >=3.12, Tkinter/ttk из стандартной библиотеки. Для Windows-сборки закреплён обычный CPython 3.13.16 x64 и PyInstaller 6.22.3. Актуальные security-релизы Python 3.12 не имеют официального Windows installer.
+Закреплены **Go 1.26.9** и **Gio/Gio-x v0.10.3**. Для Windows работает `CGO_ENABLED=0`; Gio использует системные Win32/Direct3D/OpenGL библиотеки, а не устанавливаемый GUI-runtime. Нативной Linux-сборке нужны EGL/GLES, X11/Wayland, xkbcommon, Xcursor/Xfixes; в headless CI — Xvfb и Mesa. Python для сборки, запуска, тестов и публикации не нужен.
 
-Fedora/Linux x64:
+Сначала подготовьте закреплённые Go-исходники. Команда из независимого tools-модуля проверяет SHA256 архива, патчит изолированные копии в `build/deps`, выполняет нативные DNS/routing/sandbox/worker-тесты и только после успеха устанавливает локальные модули. Глобальный module cache не патчится. Оба `replace` в корневом `go.mod` указывают на эти копии; поэтому подготовка выполняется **до** команд корневого модуля.
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install --require-hashes -r requirements.txt
-.venv/bin/python scripts/fetch_vendor.py --platform linux-amd64      # wgcf, проверка SHA256
-.venv/bin/python scripts/build_wireproxy.py --platform linux-amd64   # нужен Go 1.26+
-PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
+go -C tools run -mod=readonly ./cmd/prepare
+go -C tools test -mod=readonly ./...
+go test -mod=readonly ./...
+go test -mod=readonly -race ./...
+go build -mod=readonly -trimpath -ldflags='-s -w' -o build/warppocket-go ./cmd/warppocket
 ```
 
-Windows x64 (PowerShell, для разработки нужен Python и Go):
+Windows x64 (PowerShell):
 
 ```powershell
-python -m venv .venv
-.venv\Scripts\python -m pip install --require-hashes -r requirements.txt
-.venv\Scripts\python scripts/fetch_vendor.py --platform windows-amd64
-.venv\Scripts\python scripts/build_wireproxy.py --platform windows-amd64
-$env:PYTHONPATH = 'src'
-.venv\Scripts\python -m unittest discover -s tests -v
+go -C tools run -mod=readonly ./cmd/prepare
+go -C tools test -mod=readonly ./...
+go test -mod=readonly ./...
+$env:CGO_ENABLED = '0'
+go build -mod=readonly -trimpath -ldflags='-s -w -H windowsgui' -o dist/WarpPocket.exe ./cmd/warppocket
+.\dist\WarpPocket.exe
 ```
 
-Узкая проверка: `python -m unittest discover -s tests -p 'test_profiles.py' -v` с `PYTHONPATH=src`. Windows-specific Job Object/DACL tests запускаются на Windows; POSIX permissions — на Linux. Actual-helper smoke использует синтетические ключи и loopback endpoint, не интернет и не регистрацию.
+`-mod=readonly` указан намеренно: `vendor/` содержит metadata и notices, а не Go vendoring tree. Версии зависимостей фиксируются `go.mod`/`go.sum`, исходники engine — `vendor/wireproxy-build.json`; зависеть от неявного `-mod=vendor` нельзя.
 
-`fetch_vendor.py` получает только закреплённый `wgcf 2.3.1` и проверяет SHA256 до использования. `build_wireproxy.py` собирает `wireproxy 1.1.3` из закреплённых исходников (tarball и модуль `golang.zx2c4.com/wireguard`) с патчем `reserved-support+ordered-dns+split-routing`, проверяет SHA256 архива и печатает SHA256 результата. Версии и SHA256 upstream-исходников остаются прежними; меняется локальный рецепт патча. Ненулевой результат загрузчика или ошибка сборки запрещает продолжать со старыми бинарниками. Helpers, окружения и результаты сборок не хранятся в Git.
+Перед сборкой выполняются Go-тесты DNS-политики в отдельном модуле `wireguard-go/tun/netstack` и routing/sandbox/worker-тесты wireproxy — на ОС раннера даже при cross-build. В них есть A/AAAA, отрицательные ответы, fallback, отмена, общий UDP/TCP deadline, настоящий SOCKS CONNECT и импортируемый engine-entry. Неуспех gate останавливает подготовку и публикацию. Тестовые Go payloads хранятся как `tools/internal/prepare/payload/*.go.txt`, а не как конфликтующие пакеты в корневом модуле.
 
-Перед сборкой helper'а выполняются нативные Go-тесты DNS-политики в изолированной копии `wireguard-go/tun/netstack` и routing/sandbox-тесты самого wireproxy (на ОС раннера, даже при cross-build). Они проверяют DNS fallback, A/AAAA, отрицательные ответы, отмену, deadline и UDP→TCP через локальный виртуальный netstack, классификатор доменов и настоящий SOCKS CONNECT через установленные production-options. Неуспех любого gate останавливает сборку и публикацию; глобальный Go module cache не патчится.
+Нативные screenshot-тесты Crayon (семь состояний при 100/125/150% DPI):
+
+```sh
+LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a go test -mod=readonly -tags guirender ./internal/ui -run TestRenderedCrayonStatesAndDPI -count=1
+```
 
 ### Сборка и offline smoke EXE
 
-На Windows после получения helpers:
+На Windows после сборки:
 
 ```powershell
-.venv\Scripts\python -m pip install --require-hashes -r requirements-build.txt
-.venv\Scripts\python -m PyInstaller --noconfirm --clean packaging/WarpPocket.spec
-.venv\Scripts\python scripts/ci_smoke.py --exe dist/WarpPocket.exe --out build/smoke
+go -C tools run -mod=readonly ./cmd/smoke --exe ../dist/WarpPocket.exe --out ../build/go-smoke --source-root ..
 ```
 
-Smoke использует синтетический профиль и UDP endpoint `127.0.0.1:9`: он не регистрирует WARP и не обращается в интернет. Проверяются настоящее Tk-окно, вложенные helpers, TLS-сертификаты и лицензии, SOCKS-handshake и штатная очистка. Затем EXE запускается из пути с пробелами и кириллицей; драйвер завершает **только внутренний GUI PID**, записанный самим приложением, и проверяет исчезновение helper и закрытие порта. Убийство всего дерева не засчитывается как доказательство работы Job Object. В артефакт `WarpPocket-packaged-smoke` попадают только безопасные JSON-отчёты, не runtime-конфиги.
+Smoke использует синтетический профиль и UDP endpoint `127.0.0.1:9`: не регистрирует WARP и не обращается в интернет. Проверяются реальные Gio frames, встроенные CA/лицензии, тот же EXE как engine, SOCKS-handshake, нативный clipboard, выбор и импорт тестового файла, отмена второго picker при закрытии окна и штатная очистка. Затем драйвер завершает **только GUI PID** и проверяет остановку engine и закрытие порта **до** аварийной очистки safety-job. Нет PyInstaller outer-launcher; убийство всего дерева не засчитывается как доказательство. EXE запускается один из пути с пробелами и кириллицей, без соседних runtime-файлов. Безопасные JSON-отчёты остаются только внутренними CI-артефактами.
+
+На Linux можно отдельно выполнить `build/warppocket-go --smoke build/go-smoke-linux/graceful.json` под X11 или Xvfb, как в CI. Если локальный Wayland-композитор зависает в EGL, проверенный запуск через доступный X11: `WAYLAND_DISPLAY=warppocket-no-such-display LIBGL_ALWAYS_SOFTWARE=1 build/warppocket-go --smoke build/go-smoke-x11/graceful.json`. Переменные действуют только для этой команды; системные настройки и стандартные renderer-fallbacks приложения не меняются. Полный внешний crash-driver предназначен для Windows.
 
 Для отдельной приёмки на чистой Windows 10 x64 нужны запуск EXE без установленных Python/WireGuard и без повышения прав, реальный HTTPS через SOCKS5, поиск при непрерывном primary-трафике, повторное подключение и очистка после закрытия. Пока такой среды для проверки не было; результат Server 2022 CI не выдаётся за этот тест.
 
 ## Реальный сетевой gate: только явно
 
-**Регистрация передаёт данные Cloudflare и означает принятие [условий](https://www.cloudflare.com/application/terms/).** Обычный CI никогда не регистрирует устройства. Два флага согласия раздельны: второй профиль нужен для поиска без вмешательства в основной WireGuard-туннель.
+**Регистрация передаёт данные Cloudflare и означает принятие [условий](https://www.cloudflare.com/application/terms/).** В GUI согласие для primary/probe раздельное. Обычный CI никогда не регистрирует устройства. Опциональный network test использует только уже существующие отдельные профили с `Reserved` и запрещает любые вызовы API, в том числе регистрацию.
 
 ```sh
-.venv/bin/python scripts/e2e_network.py \
-  --data-dir "$HOME/.local/share/warppocket-e2e" \
-  --accept-tos --accept-probe-tos \
-  --report "$HOME/.local/share/warppocket-e2e/last-report.json"
+WARPPOCKET_E2E_DATA="$HOME/.local/share/warppocket-e2e" \
+WARPPOCKET_E2E_EXE="$PWD/build/warppocket-go" \
+go test -mod=readonly -tags network ./internal/acceptance -v -count=1 -timeout=5m
 ```
 
-Последующие запуски используют существующий профиль/аккаунт. Валидный аккаунт после частичной ошибки регистрации не регистрируется заново: повторяется генерация. Невалидный частичный аккаунт не заменяется автоматически. Не удаляйте аккаунты для бесконечных повторных регистраций.
+Нужен отдельный приватный data-dir с уже созданными primary/probe. Test проверяет настоящее HTTPS через SOCKS/WARP, непрерывный HTTPS-stream во время probe, сохранность primary PID/порта/профилей и owned-process/config cleanup. DIRECT доказывается наличием исходящего TCP-сокета именно engine-процесса; запросы к тому же numeric IP должны оставаться в WARP. Безопасный отчёт пишется в приватный data-dir, не в release.
 
-Gate последовательно проверяет:
-
-1. Регистрация/сохранённый профиль → `127.0.0.1:25344` → TLS-verified HTTPS trace и Google/Apple.
-2. Полная остановка → другой endpoint → повторный успех.
-3. Повторное использование сохранённого профиля без регистрации.
-4. Активный primary + последовательные проверки отдельным probe при непрерывных основных HTTPS-запросах.
-5. Сохранность PID/порта/профиля primary и cleanup процессов/портов.
-
-Можно добавить кандидатов повторением `--endpoint IP:port`. За один этап проверяется не более 30 уникальных кандидатов; после 180 секунд новые проверки не начинаются. Практический пример рабочих кандидатов: `--endpoint 188.114.96.1:4500 --endpoint 188.114.97.1:4500`. Если в профиле нет `Reserved`, e2e сам запрашивает его через Cloudflare API (`ensure_reserved`). Неудача даёт ненулевой exit code и безопасный JSON-отчёт, а не ложный статус «Подключено». При блокировке WireGuard/UDP GUI не решит проблему транспорта.
+Обычное приложение переиспользует сохранённые профили/аккаунты. Перед новым регистрационным POST записывается `registration.pending`: при неоднозначном результате повторная регистрация автоматически не делается. Валидный полученный аккаунт сохраняется до генерации профиля. Не удаляйте аккаунты/marker ради бесконечных регистраций. При блокировке WireGuard/UDP замена GUI не решит транспортную проблему.
 
 ## Данные и приватность
 
@@ -111,7 +106,7 @@ Gate последовательно проверяет:
 - Windows: `%LOCALAPPDATA%\WarpPocket`;
 - Linux: `$XDG_DATA_HOME/warppocket`, иначе `~/.local/share/warppocket`.
 
-E2E использует **отдельный** каталог, заданный `--data-dir`.
+Профили, аккаунты и схема-1 кеш прежней Python-версии переиспользуются без миграционной перезаписи; проверено по исходным байтам. `--data-dir` позволяет использовать отдельный каталог. Instance lock совместим с прежней версией; файл `.instance.lock` не удаляется после освобождения блокировки.
 
 ```text
 settings.json                  # только endpoint, роль, время, HTTPS-задержка
@@ -121,7 +116,7 @@ run/                           # приватные временные конф�
 logs/                          # ограниченные собственные диагностические события
 ```
 
-Windows-каталог защищён DACL текущего пользователя; на Linux каталоги `0700`, секретные файлы `0600`. Кеш записывается атомарно. Повреждение кеша не затрагивает профили; неизвестная версия кеша не перезаписывается. Сырой вывод helpers не сохраняется: он может содержать ключи и токены.
+Windows-каталог защищён DACL текущего пользователя; на Linux каталоги `0700`, секретные файлы `0600`. Кеш записывается атомарно. Повреждение кеша не затрагивает профили; неизвестная версия кеша не перезаписывается. Сырой вывод engine не сохраняется: он может содержать ключи и токены.
 
 Импорт принимает только нормализованный single-peer WireGuard-профиль: ключи, адреса, DNS-IP, полный IPv4-маршрут, endpoint, MTU, необязательные keepalive/PSK и `Reserved` (три байта 0..255; нужен для WARP-совместимых профилей). Дополнительные listeners/peers, hooks, `WGConfig` и переменные окружения запрещены. Импорт выполняется только при остановленных операциях; исходный текст никогда не передаётся helper напрямую.
 
@@ -133,7 +128,7 @@ Windows-каталог защищён DACL текущего пользовате
 
 ### Жёстко заданная маршрутизация TCP
 
-Встроенный helper выбирает маршрут по имени назначения из SOCKS5; в интерфейсе это обозначено строкой **«RU/РФ/SU и VK — напрямую; остальное — WARP»**. Через **DIRECT** идут:
+Встроенный engine выбирает маршрут по имени назначения из SOCKS5; в интерфейсе это обозначено строкой **«RU/РФ/SU и VK — напрямую; остальное — WARP»**. Через **DIRECT** идут:
 
 - домены внутри зон `.ru`, `.su`, `.рф` (IDNA: `.xn--p1ai`), включая их поддомены; сами имена TLD `ru`, `su`, `рф`/`xn--p1ai` под правило не попадают;
 - корневые имена и поддомены `vk.com`, `vkontakte.com`, `vk.cc`, `vk.link`, `vk.me`, `userapi.com`, `vk-cdn.net`, `vkuser.net`, `vkuseraudio.com`, `vkuseraudio.net`, `vkuservideo.com`, `vkuservideo.net`, `vkuserlive.com`, `vkuserlive.net`.
@@ -158,4 +153,4 @@ wireproxy поддерживает TCP CONNECT, но **не UDP ASSOCIATE**. Д�
 
 ## Лицензии
 
-Upstream notices находятся в [vendor/licenses](vendor/licenses): wireproxy (ISC), wgcf (MIT), списки ros-scripts (MIT). Оригинальные списки эндпоинтов закреплены на commit `d92d68db030e833c7f6032697e4f177dfe976230`. Условия Cloudflare применяются отдельно от лицензий компонентов.
+Полные notices Go/Gio/зависимостей, трёх шрифтов, CA и исходного WARP-протокола встроены в приложение и доступны через «Настройки → Лицензии». Источники: [internal/resources/licenses.txt](internal/resources/licenses.txt), [vendor/licenses](vendor/licenses). Wireproxy — ISC, API/TLS-reference wgcf — MIT, Gio — MIT/Unlicense. Списки ros-scripts — MIT, закреплены на commit `d92d68db030e833c7f6032697e4f177dfe976230`. Условия Cloudflare применяются отдельно.

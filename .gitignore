@@ -1,4 +1,4 @@
-# Python environments, bytecode and local packaging output.
+# Local test environments, bytecode and generated Go/build output.
 .venv/
 venv/
 __pycache__/
@@ -7,7 +7,7 @@ __pycache__/
 /build/
 /dist/
 
-# Downloaded executables are reproduced from vendor/manifest.json, never tracked.
+# Legacy downloaded executables are local only; the Go app uses its own EXE.
 /vendor/linux-amd64/
 /vendor/windows-amd64/
 
