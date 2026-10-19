@@ -24,7 +24,7 @@ jobs:
       - name: Build native GUI executable without cgo
         env:
           CGO_ENABLED: '0'
-        run: go build -trimpath -ldflags="-s -w -H windowsgui" -o build/WarpPocket-gio-frame.exe ./cmd/warppocket
+        run: go build -mod=readonly -trimpath -ldflags="-s -w -H windowsgui" -o build/WarpPocket-gio-frame.exe ./cmd/warppocket
       - name: Require real Gio frames and clean window close
         shell: pwsh
         run: |
