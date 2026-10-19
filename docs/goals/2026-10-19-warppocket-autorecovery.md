@@ -1,6 +1,6 @@
 # Goal: automatic recovery of an established WARP session
 
-Status: active
+Status: complete
 Source: user «делай копию плана в цель и Реализовать и коммит пуш»; the corrected six-part autoreconnect/keepalive plan from the preceding audit.
 Last updated: 2026-10-19
 
@@ -47,8 +47,8 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
   - Source: corrected plan step 6; user requires implementation, commit and push.
   - Acceptance: normal Linux/Windows tests exercise actual Controller+Manager+Backend with synthetic SOCKS subprocess: owned-primary exit leads to a different live PID, same port, verified Connected, retention beyond old trial deadline and cleanup. Preserve primary/probe continuity and routing assertions in the opt-in Linux real-network gate before killing only its primary; then require new live primary/full fresh health, zero API calls, unchanged identity files and max two engines. Existing root/tools/race/vet/render/native Windows packaged and EXE-only delivery gates pass. Commit/push the verified change and document detection/TCP limits honestly.
   - Primary evidence: targeted and broad Go gates, offline native recovery, opt-in existing-profile network gate, successful native Windows CI and matching tested rolling EXE.
-  - Status: in_progress
-  - Evidence: root and independent tools tests/race/vet pass; ordinary real-process recovery passes on Linux and Windows, including same fixed port/new live PID and survival beyond its old trial budget. Actual existing-profile network gate passes: 55 requests/zero failures on one continuous primary stream during probe, then owned-primary exit and automatic verified replacement in 14.966 seconds (an observation, not an SLA), max two engines/one of each role, no API/registration, unchanged identity files and cleanup. Feature commit 6755bf23e8df8a391918502854b8613b27af76b1 is pushed; run 39309173932 passes Linux, Windows and the native Windows package (18,273,280-byte EXE, all graceful/GUI-only-crash checks). Publication is correctly skipped on the feature branch. Only master publication and matching tested-EXE verification remain.
+  - Status: verified
+  - Evidence: root and independent tools tests/race/vet pass; ordinary real-process recovery passes on Linux and Windows, including same fixed port/new live PID and survival beyond its old trial budget. Actual existing-profile network gate passes: 55 requests/zero failures on one continuous primary stream during probe, then owned-primary exit and automatic verified replacement in 14.966 seconds (an observation, not an SLA), max two engines/one of each role, no API/registration, unchanged identity files and cleanup. Feature run 39309173932 passes all required gates. Master fe8434c24fa436359c3e2f145218d5257245e0a7 passes all four jobs in run 39311306996, including native Windows package and rolling publication. Release 417227270 contains only WarpPocket.exe (18,273,280 bytes), and rolling matches that master SHA. The direct downloaded EXE is byte-for-byte identical to the same-run tested artifact; its SHA256 is a5cf6d31b4bc2a98c17a602612a2332dd076561f70b46ebb6dc70fcae30d8be0. No ZIP, checksum file or smoke report is attached to the release.
 
 ### Constraints
 - Same local SOCKS 127.0.0.1:25344, existing WARP transport and strict TLS/remote SOCKS DNS/independent-resource health checks. No direct/system-DNS/environment-proxy fallback, new service or weakening of five-stage DNS or RU/VK split routing.
@@ -77,16 +77,14 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 6. **Evidence and delivery.** Add failure-capable/probe-owning controller fakes and focused virtual-time tests; offline real-process recovery in the normal backend test binary; extend the existing live Linux gate after prior continuity/routing proofs (new live PID barrier, same port, full fresh HTTPS, no API/profile change). Calculate overall test timeout from phase budgets (about eleven minutes), not by shortening production budgets. Run targeted then root/tools/race/vet, recovery render and existing native Windows package gates; update README, commit/push and verify final delivery.
 
 ## Current Checkpoint
-- Closes: R6 master delivery; feature implementation and feature-branch native verification are complete.
-- Smallest next action: diagnose the unchanged native test helper's readiness failure on master using retained process handles, then require a successful full master pipeline and publisher.
-- Expected evidence: successful master Linux/Windows/package/publication gates; compare the sole rolling EXE with that same run's tested artifact.
-- Replan if: a concrete mandatory gate exposes a mismatch; fix the smallest in-scope cause without weakening contracts.
+- Closed: R1–R6 and affected constraints. Implementation, local/native verification, master publication and downloaded-EXE comparison are complete.
+- Delivery: persist this completion record; subsequent master pushes use the existing verified Go-only release path. No implementation checkpoint remains.
 
 ## Current State
-- Baseline: 27d44834e2276c125a68c94cda9e0c0369b88f41; verified feature 6755bf23e8df8a391918502854b8613b27af76b1 and native-proof record are pushed to master at 770b71b9535d171fe7fa5c430acd2df8812d46c5.
-- Last evidence: all local and feature-branch gates pass, including native Windows recovery and packaged lifecycle in run 39309173932. Master run 39310416301 passes Linux but fails the unchanged tools TestNativeWindowsGUIOnlyTerminationWithRetainedSafetyJob readiness wait at 20 seconds; root Windows/package/publication are not green. The wait reports neither owner exit nor the child's readiness state. Add only retained-handle diagnostics before deciding whether this is a transient launch or a reproducible cause; no test or security requirement is waived. Private profiles/accounts and design input remain untouched.
+- Baseline: 27d44834e2276c125a68c94cda9e0c0369b88f41; implementation 6755bf23e8df8a391918502854b8613b27af76b1 and the diagnostic-only native test record are delivered to master at fe8434c24fa436359c3e2f145218d5257245e0a7.
+- Last evidence: master run 39311306996 passes Linux, Windows, native Windows packaging and rolling publication. Its downloaded sole EXE matches the same-run tested artifact and release digest; master and rolling SHA agree. The earlier unchanged native helper readiness failure remains in checkpoint history; the diagnostic-only addition changes no launch, time budget, cleanup or passing assertion, and the subsequent full native run passes. Real-network recovery and all local/native feature proofs are complete. Private profiles/accounts, design input, .venv and completed historical goals remain untouched.
 - Blocker: none.
-- Next: verified master/rolling delivery.
+- Next: none; approved implementation and delivery are complete.
 
 ## Material Decisions
 - 2026-10-19: use the conservative new-profile-only 25-second keepalive default; zero remains a supported explicit disabled value in existing/imported profiles.
@@ -97,6 +95,11 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 - 2026-10-19: R1–R5 implemented and locally verified, including failure precedence/latch, single-owner recovery, progressive candidate/backoff behavior, new-profile-only keepalive and truthful UI. R6 local real-process/live-network/render gates pass; native Windows delivery is next. No new registrations or identity-file changes.
 - 2026-10-19: feature 6755bf2 is pushed; run 39309173932 passes all required feature-branch jobs, including ordinary native Windows controller recovery and packaged Gio/engine lifecycle. Only master publication and downloaded-EXE comparison remain.
 - 2026-10-19: master 770b71b is pushed; Linux passes, but a previously passing unchanged native test helper times out before reporting its child. R6 remains open; add bounded, handle-based failure diagnostics without weakening ownership or readiness assertions.
+- 2026-10-19: diagnostic-only fe8434c passes all four master jobs in run 39311306996. Rolling points to this master commit and contains only the tested 18,273,280-byte EXE. Direct release download and same-run artifact compare byte-for-byte; R6 and final closure checks pass.
 
 ## Completion
-- Implementation and local/native verification complete; verified master/rolling delivery remains. No final completion claim yet.
+- Resolved outcomes: R1–R6 verified; no pending outcome or known delivery blocker.
+- Commands and runtime evidence: root and tools `go test -mod=readonly -race ./...` and `go vet -mod=readonly ./...`; 24 native GPU render fixtures; ordinary Linux/Windows real Controller/Manager/Backend recovery integration; opt-in existing-profile network gate with fresh verified HTTPS after replacement, zero API calls and unchanged identity files; native Windows packaged GUI/clipboard/import/picker/graceful/GUI-only-crash proof.
+- Delivery: [master run 39311306996](https://github.com/0FL01/WarpPocket/actions/runs/39311306996), all four jobs successful; [sole rolling WarpPocket.exe](https://github.com/0FL01/WarpPocket/releases/download/rolling/WarpPocket.exe), downloaded and compared with that run's tested artifact. Release and master tag identity agree.
+- Constraint and diff-scope check: existing transport, strict verified health, ordered tunneled DNS, split routing, role/identity cap, checked cleanup, atomic cache commits and private persistence are preserved. No new registrations, profile/account rewrites, direct/system fallback, runtime Python, dependency/source-pin/publisher changes, generated binaries or private artifacts are committed. The one documented tools-test exception adds retained-handle diagnostics only; all ownership/readiness assertions remain. README states detection delays, bounded cycles and the loss of old TCP streams honestly. User design/.venv/private data and completed historical goals are preserved.
+- Final status: complete. Stop substantive autorecovery work.
