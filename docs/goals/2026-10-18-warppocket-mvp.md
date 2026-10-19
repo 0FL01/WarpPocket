@@ -36,7 +36,7 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
   - Acceptance: commit exists on origin; Actions result or concrete blocker reported.
   - Primary evidence: git commit SHA, remote SHA and workflow run.
   - Status: verified
-  - Evidence: reconnect fix e2f61d78 + Actions run 39224555542 (Linux Python 3.12.15/3.13.16, Windows Python 3.13.16). The reserved-support change set is pushed in the current checkpoint with its own Actions verification.
+  - Evidence: reconnect fix e2f61d78 + Actions run 39224555542 (Linux Python 3.12.15/3.13.16, Windows Python 3.13.16). Reserved-support change set 19af8157 pushed; Actions run 39235875257 succeeded on all three jobs, including the native Windows job that builds the patched helper with Go 1.26 and passes 64 tests.
 
 ### Constraints
 - No false connected status: success still requires warp=on/plus plus an independent HTTPS resource. GUI is now permitted because the R1 gate passed.

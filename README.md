@@ -10,7 +10,7 @@
 
 Gate прошёл: primary на `188.114.96.1:4500` (417 мс), после полной остановки другой endpoint `188.114.97.1:4500` (327 мс), повторное использование сохранённого профиля без регистрации, отдельный probe при непрерывных запросах primary (6 запросов, 0 сбоев) без изменений PID/порта/профиля, cleanup подтверждён. `engage.cloudflareclient.com:2408` в тестовых сетях стабильно таймаутит; рабочие кандидаты — `188.114.9x.1:4500`.
 
-GitHub Actions собирает патченный helper (Go 1.26) на Linux и Windows и прогоняет полный набор тестов с платформенными skips; на Windows выполняются настоящие Job Object owner-crash/handle tests, DACL test и offline smoke helper'а. Это не проверка готового onefile EXE и не замена Windows 10-приёмке.
+GitHub Actions собирает патченный helper (Go 1.26) на Linux и Windows и прогоняет полный набор тестов с платформенными skips; на Windows выполняются настоящие Job Object owner-crash/handle tests, DACL test и offline smoke helper'а. Проверенный прогон: [run 39235875257](https://github.com/0FL01/WarpPocket/actions/runs/39235875257). Это не проверка готового onefile EXE и не замена Windows 10-приёмке.
 
 Не считать открытый SOCKS-порт доказательством подключения: проверка требует `warp=on/plus` и независимого HTTPS-ресурса. Это не системный VPN и не гарантия обхода DPI.
 
