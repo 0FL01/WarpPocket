@@ -100,7 +100,10 @@ func launchNative(args []string, cwd string) (_ *nativeProcess, err error) {
 		},
 		ProcThreadAttributeList: attributes.List(),
 	}
-	flags := uint32(windows.CREATE_NO_WINDOW | windows.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT)
+	// Do not allocate even a hidden console for console-subsystem fixtures or
+	// descendants. Standard streams are the explicit NUL handle above; atomic
+	// JOB_LIST assignment and kill-on-close ownership are unaffected.
+	flags := uint32(windows.DETACHED_PROCESS | windows.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT)
 	err = windows.CreateProcess(application, command, nil, nil, true, flags, nil, directory, &startup.StartupInfo, &info)
 	// Attribute values and UTF-16 buffers must outlive the actual native call.
 	runtime.KeepAlive(jobs)

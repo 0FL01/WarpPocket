@@ -119,7 +119,7 @@ func TestWindowsAtomicJobContainsLeaderAndInheritedDescendant(t *testing.T) {
 		childFound = childFound || id == uintptr(child.PID)
 	}
 	if listErr != nil || list.Assigned != 2 || list.Count != 2 || !leaderFound || !childFound {
-		t.Fatal("atomic launch job did not contain the leader and inherited descendant")
+		t.Fatalf("atomic launch job did not contain exactly the leader and inherited descendant: assigned=%d count=%d ids=%v leader=%d child=%d error=%v", list.Assigned, list.Count, list.IDs, p.PID(), child.PID, listErr)
 	}
 }
 
