@@ -1,0 +1,54 @@
+// Injected into pinned wireproxy. This is a preamble, not AmneziaWG framing.
+package wireproxy
+
+import (
+	"crypto/rand"
+	"errors"
+	"sync"
+
+	"golang.zx2c4.com/wireguard/conn"
+	"golang.zx2c4.com/wireguard/device"
+)
+
+const (
+	warpPocketJunkCount   = 4
+	warpPocketJunkMinSize = 64
+	warpPocketJunkMaxSize = 128 // exclusive, as in the reference junk generator
+)
+
+type warpPocketJunkBind struct {
+	conn.Bind
+	sendMu sync.Mutex
+}
+
+var _ conn.Bind = (*warpPocketJunkBind)(nil)
+
+func newWarpPocketJunkBind(bind conn.Bind) conn.Bind {
+	return &warpPocketJunkBind{Bind: bind}
+}
+
+func (bind *warpPocketJunkBind) Send(bufs [][]byte, endpoint conn.Endpoint) error {
+	// Serialize the whole train with ordinary sends, without a new socket,
+	// timer or shutdown owner. Close must remain independent of this mutex.
+	bind.sendMu.Lock()
+	defer bind.sendMu.Unlock()
+	if len(bufs) == 1 && len(bufs[0]) == device.MessageInitiationSize && bufs[0][0] == device.MessageInitiationType {
+		for i := 0; i < warpPocketJunkCount; i++ {
+			var random [warpPocketJunkMaxSize]byte
+			if _, err := rand.Read(random[:]); err != nil {
+				return err
+			}
+			// Six random bits select [64,128) uniformly. The remaining bytes
+			// are fresh payload; the underlying bind still applies Reserved.
+			size := warpPocketJunkMinSize + int(random[0]&63)
+			if err := bind.Bind.Send([][]byte{random[1 : size+1]}, endpoint); err != nil {
+				var gso conn.ErrUDPGSODisabled
+				if !errors.As(err, &gso) || gso.RetryErr != nil {
+					return err
+				}
+			}
+		}
+	}
+	// Do not normalize or mask the actual WireGuard send's error semantics.
+	return bind.Bind.Send(bufs, endpoint)
+}

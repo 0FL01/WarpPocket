@@ -15,7 +15,7 @@ import (
 
 const (
 	wireguardModule = "golang.zx2c4.com/wireguard"
-	supportedPatch  = "reserved-support+ordered-dns+split-routing"
+	supportedPatch  = "reserved-support+ordered-dns+split-routing+handshake-junk"
 	maxSourceBytes  = 20 * 1024 * 1024
 )
 
@@ -35,7 +35,7 @@ type preparer struct {
 
 // Prepare locates the repository when root is empty. Downloads, cache and source
 // copies stay under its ignored build/deps directory. Existing prepared sources
-// remain untouched if fetching, patch validation or either native gate fails.
+// remain untouched if fetching, patch validation or any native gate fails.
 func Prepare(ctx context.Context, root string, output io.Writer) (Result, error) {
 	if output == nil {
 		output = io.Discard
@@ -160,6 +160,7 @@ func (p preparer) nativeGates(ctx context.Context, proxy, guard string, env []st
 	for _, cmd := range []command{
 		{Args: []string{"go", "test", "./tun/netstack", "-run", "^TestWarpPocketDNS", "-count=1", "-v"}, Dir: guard, Env: env, Timeout: 300 * time.Second, Label: "native DNS tests"},
 		{Args: []string{"go", "test", ".", "./cmd/wireproxy", "-run", "^TestWarpPocketRouting", "-count=1", "-v"}, Dir: proxy, Env: env, Timeout: 300 * time.Second, Label: "native routing tests"},
+		{Args: []string{"go", "test", ".", "-run", "^TestWarpPocketJunk", "-count=1", "-v"}, Dir: proxy, Env: env, Timeout: 300 * time.Second, Label: "native junk tests"},
 	} {
 		result, err := p.run(ctx, cmd)
 		if _, writeErr := p.output.Write(result.Stdout); writeErr != nil {

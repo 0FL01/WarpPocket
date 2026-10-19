@@ -8,7 +8,7 @@ Backend, GUI, WARP API, подготовка исходников, smoke и пу
 
 **Один файл не означает один процесс.** GUI запускает собственный EXE в закрытом режиме `--engine`: один primary и не более одной последовательной probe-проверки. На Windows workers принадлежат Job Objects с kill-on-close, назначенным атомарно при создании; на Linux используются отдельные process groups. Это сохраняет очистку при закрытии и аварии GUI без извлекаемых бинарников.
 
-Сетевое ядро — закреплённые исходники wireproxy/WireGuard с патчами `reserved-support+ordered-dns+split-routing`. WARP `Reserved` подставляется в исходящие сообщения; зеркалированное сервером поле очищается перед разбором входящих. GUI не меняет маршруты, DNS, firewall или глобальный прокси ОС.
+Сетевое ядро — закреплённые исходники wireproxy/WireGuard с патчами `reserved-support+ordered-dns+split-routing+handshake-junk`. WARP `Reserved` подставляется в исходящие сообщения; зеркалированное сервером поле очищается перед разбором входящих. GUI не меняет маршруты, DNS, firewall или глобальный прокси ОС.
 
 План миграции и проверяемые результаты: [Go/Gio goal](docs/goals/2026-10-19-warppocket-go-gio.md). Реальный Go network gate переиспользовал существующие профили: 58 HTTPS-запросов без обрыва во время 15-секундного probe-поиска, один primary-stream, максимум два engine-workers; DIRECT/IP-only маршрутизация, неизменность профилей и cleanup подтверждены. Нативный Windows CI проверяет работу на Server 2022, а не удостоверяет отдельную приёмку на чистой Windows 10.
 
@@ -61,17 +61,32 @@ build/warppocket-go --data-dir "$HOME/.local/share/warppocket-e2e"
 
 Новые профили, сгенерированные приложением, получают **`PersistentKeepalive = 25`** — встроенный WireGuard keepalive, не отдельный heartbeat-процесс. Существующие и импортированные значения, включая отключённый `0`, сохраняются; runtime не подменяет их и миграционная перезапись не нужна. Keepalive помогает поддерживать NAT-состояние, но не заменяет проверку и восстановление соединения. План и доказательства: [autorecovery goal](docs/goals/2026-10-19-warppocket-autorecovery.md).
 
+### WARP-совместимый handshake junk
+
+Перед **каждой фактически отправляемой инициацией WireGuard-handshake**, включая retry и rekey, engine отправляет четыре отдельные UDP-датаграммы с криптослучайным содержимым и размером **64 ≤ n < 128 байт** (`Jc=4`, `Jmin=64`, `Jmax=128` с исключённой верхней границей). Используются **тот же bind, UDP source port и endpoint**, затем отправляется обычный initiation. Штатное ограничение частоты handshake сохраняется: подавленная попытка не создаёт junk. Response, cookie, transport data и keepalive передаются без preamble.
+
+Это фиксированная внутренняя политика primary/probe, а не полный AmneziaWG: типы/размеры настоящих WireGuard-сообщений, шифрование, ключи и таймеры не меняются. Новых полей импорта, настроек, сокетов, фоновых задач или heartbeat нет. Общая обёртка работает над Windows `WinRingBind` и стандартным `StdNetBind`; junk отправляется по одной датаграмме с соблюдением `BatchSize=1`. Существующая подстановка `Reserved` сохраняется, в том числе меняет эти три байта в junk — весь on-wire payload полностью случайным не является. Реальная ошибка junk-send прерывает текущую попытку до initiation; повтор делает штатный WireGuard. Успешный resend после отключения UDP GSO ошибкой не считается.
+
+Junk — проверяемая гипотеза против классификации WireGuard провайдером, **не доказанный обход DPI и не гарантия устранения обрывов**. Он не скрывает Cloudflare endpoint и не устраняет адресную/UDP-блокировку. Периодичность сбоя сама по себе не доказывает DPI: восстановление может запускаться из-за DNS/TLS/проверочного ресурса, а остановка engine обрывает старые TCP-соединения.
+
+`logs/diagnostics.log` сохраняет только фиксированные собственные события: `connected`, `disconnected`, причины начала восстановления `connection_lost`/`proxy_exited`, подтверждённое `recovered` и коды неудачных периодических health-проверок (`health_timeout`, `health_tls`, `health_failed`, `health_response_large`, `health_setup_failed`, `warp_not_enabled`, `external_unavailable`, `proxy_cleanup_failed`). В записи — время, код и выбранный публичный WARP endpoint, не посещаемые адреса/ответы/ключи/произвольный текст ошибки. Отмена не считается сетевым сбоем; порог и таймауты восстановления прежние. Сохраняются приватные права и ротация: файл до примерно 1 МиБ плюс два архива. Между reason и `recovered` можно измерить длительность восстановления; эти события не устанавливают причину на уровне провайдера.
+
+Для сравнения нужна диагностическая сборка **без junk** и такая же сборка **с junk**: запускать последовательно на затронутой Windows-машине/сети, с одной сохранённой идентичностью, одинаковым исходным endpoint, MTU и keepalive. Не использовать эту идентичность одновременно в другом клиенте. На каждую сборку — минимум 60 минут: 30 минут без пользовательского трафика со штатными health/keepalive и 30 минут длительной TCP/HTTPS-нагрузки через SOCKS. Сравнивать время до первого обрыва, причины/число восстановлений и их длительность; reconnect не засчитывается как непрерывная связь. Если baseline не воспроизводит сбой, эффект остаётся недоказанным. Server 2022 CI и локальные UDP-тесты не заменяют эту приёмку.
+
+Откат: закрыть приложение, убедиться в очистке workers и заменить EXE сохранённой baseline-сборкой. Профили/аккаунты не удалять и не перерегистрировать; автоматического fallback к plain WireGuard нет. Контракт и фактические проверки: [handshake junk goal](docs/goals/2026-10-20-warppocket-handshake-junk.md).
+
 ## Разработка
 
 Закреплены **Go 1.26.9** и **Gio/Gio-x v0.10.3**. Для Windows работает `CGO_ENABLED=0`; Gio использует системные Win32/Direct3D/OpenGL библиотеки, а не устанавливаемый GUI-runtime. Нативной Linux-сборке нужны EGL/GLES, X11/Wayland, xkbcommon, Xcursor/Xfixes; в headless CI — Xvfb и Mesa. Python для сборки, запуска, тестов и публикации не нужен.
 
-Сначала подготовьте закреплённые Go-исходники. Команда из независимого tools-модуля проверяет SHA256 архива, патчит изолированные копии в `build/deps`, выполняет нативные DNS/routing/sandbox/worker-тесты и только после успеха устанавливает локальные модули. Глобальный module cache не патчится. Оба `replace` в корневом `go.mod` указывают на эти копии; поэтому подготовка выполняется **до** команд корневого модуля.
+Сначала подготовьте закреплённые Go-исходники. Команда из независимого tools-модуля проверяет SHA256 архива, патчит изолированные копии в `build/deps`, выполняет нативные DNS/routing/sandbox/worker/junk-тесты и только после успеха устанавливает локальные модули. Глобальный module cache не патчится. Оба `replace` в корневом `go.mod` указывают на эти копии; поэтому подготовка выполняется **до** команд корневого модуля.
 
 ```sh
 go -C tools run -mod=readonly ./cmd/prepare
 go -C tools test -mod=readonly ./...
 go test -mod=readonly ./...
 go test -mod=readonly -race ./...
+go -C build/deps/wireproxy test -mod=readonly -race . -run '^TestWarpPocketJunk' -count=1
 go build -mod=readonly -trimpath -ldflags='-s -w' -o build/warppocket-go ./cmd/warppocket
 ```
 
@@ -88,7 +103,7 @@ go build -mod=readonly -trimpath -ldflags='-s -w -H windowsgui' -o dist/WarpPock
 
 `-mod=readonly` указан намеренно: `vendor/` содержит metadata и notices, а не Go vendoring tree. Версии зависимостей фиксируются `go.mod`/`go.sum`, исходники engine — `vendor/wireproxy-build.json`; зависеть от неявного `-mod=vendor` нельзя.
 
-Перед сборкой выполняются Go-тесты DNS-политики в отдельном модуле `wireguard-go/tun/netstack` и routing/sandbox/worker-тесты wireproxy — на ОС раннера даже при cross-build. В них есть A/AAAA, отрицательные ответы, fallback, отмена, общий UDP/TCP deadline, настоящий SOCKS CONNECT и импортируемый engine-entry. Неуспех gate останавливает подготовку и публикацию. Тестовые Go payloads хранятся как `tools/internal/prepare/payload/*.go.txt`, а не как конфликтующие пакеты в корневом модуле.
+Перед сборкой выполняются Go-тесты DNS-политики в отдельном модуле `wireguard-go/tun/netstack`, routing/sandbox/worker-тесты wireproxy и отдельный `TestWarpPocketJunk` gate — на ОС раннера даже при cross-build. В них есть A/AAAA, отрицательные ответы, fallback, отмена, общий UDP/TCP deadline, настоящий SOCKS CONNECT и импортируемый engine-entry. Junk gate проверяет порядок/размеры, ошибки/GSO, конкурентную отправку/Close, loopback UDP с тем же source port/Reserved на default и standard bind, а также первый initiation и штатный retry через `StartWireguard`. На Windows default-тест требует настоящий `WinRingBind`, не выдавая fallback за RIO-проверку. Неуспех любого gate останавливает подготовку и публикацию. Тестовые Go payloads хранятся как `tools/internal/prepare/payload/*.go.txt`, а не как конфликтующие пакеты в корневом модуле; обычный корневой `go test ./...` их не обнаруживает.
 
 Нативные screenshot-тесты Crayon (восемь вариантов, включая Connecting + Recovering, при 100/125/150% DPI — 24 кадра):
 

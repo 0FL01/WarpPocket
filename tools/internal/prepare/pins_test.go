@@ -22,7 +22,7 @@ const testPinsJSON = `{
 		"module": "golang.zx2c4.com/wireguard",
 		"version": "v0.0.0-20250521234502-f333402bd9cb"
 	},
-	"patch": "reserved-support+ordered-dns+split-routing"
+	"patch": "reserved-support+ordered-dns+split-routing+handshake-junk"
 }`
 
 func testPins(t *testing.T) buildPins {

@@ -1,0 +1,453 @@
+// Synthetic/local-only tests in the pinned wireproxy module; no WARP identity/API.
+package wireproxy
+
+import (
+	"bytes"
+	"crypto/ecdh"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net"
+	"net/netip"
+	"reflect"
+	"runtime"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"golang.zx2c4.com/wireguard/conn"
+	"golang.zx2c4.com/wireguard/device"
+)
+
+type warpJunkSend struct {
+	packets  [][]byte
+	endpoint conn.Endpoint
+}
+
+type warpJunkRecorder struct {
+	conn.Bind
+	mu     sync.Mutex
+	sends  []warpJunkSend
+	failAt int
+	err    error
+	mark   uint32
+}
+
+func (b *warpJunkRecorder) BatchSize() int { return 1 }
+
+func (b *warpJunkRecorder) SetMark(mark uint32) error {
+	b.mark = mark
+	return b.err
+}
+
+func (b *warpJunkRecorder) Send(bufs [][]byte, endpoint conn.Endpoint) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var copies [][]byte
+	if bufs != nil {
+		copies = make([][]byte, len(bufs))
+		for i, buf := range bufs {
+			if buf != nil {
+				copies[i] = append([]byte{}, buf...)
+			}
+		}
+	}
+	b.sends = append(b.sends, warpJunkSend{copies, endpoint})
+	if len(b.sends) == b.failAt {
+		return b.err
+	}
+	return nil
+}
+
+func warpJunkPacket(kind byte, size int) []byte {
+	packet := bytes.Repeat([]byte{0x5a}, size)
+	if len(packet) > 0 {
+		packet[0] = kind
+	}
+	return packet
+}
+
+func warpJunkEndpoint(t *testing.T, bind conn.Bind, addr string) conn.Endpoint {
+	t.Helper()
+	endpoint, err := bind.ParseEndpoint(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return endpoint
+}
+
+func warpJunkTrain(t *testing.T, sends []warpJunkSend, endpoint conn.Endpoint, initiation []byte) {
+	t.Helper()
+	if len(sends) != 5 {
+		t.Fatalf("got %d sends, want four junk datagrams and initiation", len(sends))
+	}
+	for i, send := range sends {
+		if send.endpoint != endpoint || len(send.packets) != 1 {
+			t.Fatalf("send %d changed endpoint or exceeded BatchSize=1", i)
+		}
+		if i < 4 {
+			if n := len(send.packets[0]); n < 64 || n >= 128 {
+				t.Fatalf("junk %d size %d outside [64,128)", i, n)
+			}
+		} else if !bytes.Equal(send.packets[0], initiation) {
+			t.Fatal("initiation changed")
+		}
+	}
+}
+
+func TestWarpPocketJunkInitiation(t *testing.T) {
+	base := &warpJunkRecorder{Bind: conn.NewStdNetBind()}
+	bind := newWarpPocketJunkBind(base)
+	endpoint := warpJunkEndpoint(t, bind, "127.0.0.1:2408")
+	// Nonzero reserved bytes must not prevent recognition on subsequent sends.
+	packet := warpJunkPacket(1, 148)
+	before := append([]byte(nil), packet...)
+	for i := 0; i < 2; i++ {
+		if err := bind.Send([][]byte{packet}, endpoint); err != nil {
+			t.Fatal(err)
+		}
+		warpJunkTrain(t, base.sends[i*5:(i+1)*5], endpoint, before)
+	}
+	if !bytes.Equal(packet, before) || bytes.Equal(base.sends[0].packets[0], base.sends[5].packets[0]) {
+		t.Fatal("input changed or preamble was reused")
+	}
+}
+
+func TestWarpPocketJunkMarkDelegation(t *testing.T) {
+	failure := errors.New("underlying mark rejected")
+	base := &warpJunkRecorder{Bind: conn.NewStdNetBind(), err: failure}
+	bind := newWarpPocketJunkBind(base)
+	if err := bind.SetMark(1234); err != failure || base.mark != 1234 {
+		t.Fatal("SetMark argument or error changed")
+	}
+}
+
+func TestWarpPocketJunkPassthrough(t *testing.T) {
+	for name, packets := range map[string][][]byte{
+		"nil batch": nil, "nil packet": {nil}, "empty packet": {{}},
+		"short": {warpJunkPacket(1, 3)}, "short initiation": {warpJunkPacket(1, 147)},
+		"long initiation": {warpJunkPacket(1, 149)}, "response": {warpJunkPacket(2, 92)},
+		"cookie": {warpJunkPacket(3, 64)}, "data same length": {warpJunkPacket(4, 148)},
+		"keepalive": {warpJunkPacket(4, 32)}, "unknown": {warpJunkPacket(0, 148)},
+		"batch": {warpJunkPacket(4, 80), warpJunkPacket(4, 96)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			failure := errors.New("underlying send failed")
+			base := &warpJunkRecorder{Bind: conn.NewStdNetBind(), failAt: 1, err: failure}
+			bind := newWarpPocketJunkBind(base)
+			endpoint := warpJunkEndpoint(t, bind, "127.0.0.1:2408")
+			if err := bind.Send(packets, endpoint); err != failure {
+				t.Fatalf("send error changed: %v", err)
+			}
+			if len(base.sends) != 1 || base.sends[0].endpoint != endpoint || !reflect.DeepEqual(base.sends[0].packets, packets) {
+				t.Fatal("non-initiation was split, changed or given a preamble")
+			}
+		})
+	}
+}
+
+func TestWarpPocketJunkSendErrors(t *testing.T) {
+	failure := errors.New("UDP send failed")
+	for at := 1; at <= 5; at++ {
+		t.Run(fmt.Sprintf("failure-%d", at), func(t *testing.T) {
+			base := &warpJunkRecorder{Bind: conn.NewStdNetBind(), failAt: at, err: failure}
+			bind := newWarpPocketJunkBind(base)
+			if err := bind.Send([][]byte{warpJunkPacket(1, 148)}, nil); err != failure || len(base.sends) != at {
+				t.Fatalf("continued after send %d: calls=%d, error=%v", at, len(base.sends), err)
+			}
+		})
+	}
+	for at := 1; at <= 5; at++ {
+		for _, retryErr := range []error{nil, failure} {
+			t.Run(fmt.Sprintf("GSO-%d-failed-%v", at, retryErr != nil), func(t *testing.T) {
+				gso := fmt.Errorf("wrapped: %w", conn.ErrUDPGSODisabled{RetryErr: retryErr})
+				base := &warpJunkRecorder{Bind: conn.NewStdNetBind(), failAt: at, err: gso}
+				bind := newWarpPocketJunkBind(base)
+				err := bind.Send([][]byte{warpJunkPacket(1, 148)}, nil)
+				if at < 5 && retryErr == nil {
+					if err != nil || len(base.sends) != 5 {
+						t.Fatalf("successful GSO resend rejected: calls=%d, error=%v", len(base.sends), err)
+					}
+				} else if err != gso || len(base.sends) != at {
+					t.Fatalf("GSO error hidden or send retried: calls=%d, error=%v", len(base.sends), err)
+				}
+			})
+		}
+	}
+}
+
+func TestWarpPocketJunkConcurrentTrains(t *testing.T) {
+	base := &warpJunkRecorder{Bind: conn.NewStdNetBind()}
+	bind := newWarpPocketJunkBind(base)
+	var wg sync.WaitGroup
+	for i := 0; i < 24; i++ {
+		endpoint := warpJunkEndpoint(t, bind, fmt.Sprintf("127.0.0.1:%d", 20000+i))
+		packet := warpJunkPacket(4, 32)
+		if i%2 == 0 {
+			packet = warpJunkPacket(1, 148)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := bind.Send([][]byte{packet}, endpoint); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if len(base.sends) != 72 {
+		t.Fatalf("wrong number of concurrent sends: %d", len(base.sends))
+	}
+	for i := 0; i < len(base.sends); {
+		if len(base.sends[i].packets[0]) == 32 {
+			i++
+			continue
+		}
+		warpJunkTrain(t, base.sends[i:i+5], base.sends[i].endpoint, warpJunkPacket(1, 148))
+		i += 5
+	}
+}
+
+type warpJunkBlockingBind struct {
+	conn.Bind
+	entered chan struct{}
+	closed  chan struct{}
+	once    sync.Once
+}
+
+func (b *warpJunkBlockingBind) Send([][]byte, conn.Endpoint) error {
+	close(b.entered)
+	<-b.closed
+	return net.ErrClosed
+}
+
+func (b *warpJunkBlockingBind) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return nil
+}
+
+func TestWarpPocketJunkCloseUnblocksSend(t *testing.T) {
+	base := &warpJunkBlockingBind{Bind: conn.NewStdNetBind(), entered: make(chan struct{}), closed: make(chan struct{})}
+	t.Cleanup(func() { _ = base.Close() })
+	bind := newWarpPocketJunkBind(base)
+	done := make(chan error, 1)
+	go func() { done <- bind.Send([][]byte{warpJunkPacket(1, 148)}, nil) }()
+	select {
+	case <-base.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("send never entered bind")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- bind.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close waited for the preamble mutex")
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("closed send: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("send did not stop after Close")
+	}
+}
+
+func warpJunkRead(t *testing.T, socket *net.UDPConn, deadline time.Time) ([]byte, *net.UDPAddr) {
+	t.Helper()
+	if err := socket.SetReadDeadline(deadline); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 2048)
+	n, source, err := socket.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatalf("local UDP read: %v", err)
+	}
+	return buf[:n], source
+}
+
+func TestWarpPocketJunkLoopback(t *testing.T) {
+	for name, factory := range map[string]func() conn.Bind{
+		"default":  conn.NewDefaultBind,
+		"standard": func() conn.Bind { return conn.NewStdNetBind() },
+	} {
+		for _, network := range []string{"udp4", "udp6"} {
+			t.Run(name+"/"+network, func(t *testing.T) {
+				ip := net.IPv4(127, 0, 0, 1)
+				if network == "udp6" {
+					ip = net.IPv6loopback
+				}
+				sink, err := net.ListenUDP(network, &net.UDPAddr{IP: ip})
+				if err != nil {
+					if network == "udp6" {
+						t.Skipf("IPv6 loopback unavailable: %v", err)
+					}
+					t.Fatal(err)
+				}
+				defer sink.Close()
+				base := factory()
+				t.Logf("native bind=%T BatchSize=%d", base, base.BatchSize())
+				if name == "default" && runtime.GOOS == "windows" && fmt.Sprintf("%T", base) != "*conn.WinRingBind" {
+					t.Fatal("Windows gate requires actual WinRingBind; standard fallback is tested separately")
+				}
+				bind := newWarpPocketJunkBind(base)
+				fns, port, err := bind.Open(0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer bind.Close()
+				if bind.BatchSize() != base.BatchSize() || len(fns) == 0 {
+					t.Fatal("Open/BatchSize delegation changed")
+				}
+				address := sink.LocalAddr().String()
+				endpoint := warpJunkEndpoint(t, bind, address)
+				reserved := [3]byte{17, 29, 43}
+				bind.SetReservedForEndpoint(netip.MustParseAddrPort(address), reserved)
+				packet := warpJunkPacket(1, 148)
+				want := append([]byte(nil), packet...)
+				copy(want[1:4], reserved[:])
+				var source *net.UDPAddr
+				for attempt := 0; attempt < 2; attempt++ {
+					if err := bind.Send([][]byte{packet}, endpoint); err != nil {
+						t.Fatal(err)
+					}
+					for i := 0; i < 5; i++ {
+						data, from := warpJunkRead(t, sink, time.Now().Add(3*time.Second))
+						if from.Port != int(port) || !from.IP.IsLoopback() || source != nil && from.String() != source.String() {
+							t.Fatal("preamble/initiation changed source socket")
+						}
+						source = from
+						if i < 4 {
+							if len(data) < 64 || len(data) >= 128 || !bytes.Equal(data[1:4], reserved[:]) {
+								t.Fatal("junk size or established Reserved rewrite changed")
+							}
+						} else if !bytes.Equal(data, want) {
+							t.Fatal("actual initiation changed beyond Reserved")
+						}
+					}
+				}
+				// Wrapper does not intercept receives; mirror a synthetic response
+				// to check the existing Reserved clearing with the actual backend.
+				response := warpJunkPacket(2, 92)
+				copy(response[1:4], reserved[:])
+				if _, err := sink.WriteToUDP(response, source); err != nil {
+					t.Fatal(err)
+				}
+				var receive conn.ReceiveFunc
+				for _, fn := range fns {
+					if fn.PrettyName() == "v4" && network == "udp4" || fn.PrettyName() == "v6" && network == "udp6" {
+						receive = fn
+					}
+				}
+				if receive == nil {
+					t.Fatal("missing receive function")
+				}
+				received := make(chan error, 1)
+				go func() {
+					packets := make([][]byte, bind.BatchSize())
+					for i := range packets {
+						packets[i] = make([]byte, 2048)
+					}
+					sizes, endpoints := make([]int, len(packets)), make([]conn.Endpoint, len(packets))
+					n, err := receive(packets, sizes, endpoints)
+					if err == nil {
+						clear(response[1:4])
+						if n < 1 || sizes[0] != len(response) || !bytes.Equal(packets[0][:sizes[0]], response) {
+							err = errors.New("receive Reserved processing changed")
+						}
+					}
+					received <- err
+				}()
+				select {
+				case err := <-received:
+					if err != nil {
+						t.Fatal(err)
+					}
+				case <-time.After(3 * time.Second):
+					_ = bind.Close()
+					<-received
+					t.Fatal("receive did not finish")
+				}
+			})
+		}
+	}
+}
+
+func TestWarpPocketJunkWorkerInitiationAndRetry(t *testing.T) {
+	sink, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sink.Close()
+	local, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal("synthetic key generation failed")
+	}
+	remote, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal("synthetic key generation failed")
+	}
+	address := sink.LocalAddr().String()
+	vt, err := StartWireguard(&Configuration{
+		Device: &DeviceConfig{SecretKey: hex.EncodeToString(local.Bytes()), Endpoint: []netip.Addr{netip.MustParseAddr("192.0.2.2")}, MTU: 1280,
+			Peers: []PeerConfig{{PublicKey: hex.EncodeToString(remote.PublicKey().Bytes()), PreSharedKey: strings.Repeat("0", 64),
+				Endpoint: &address, Reserved: &[3]byte{17, 29, 43}, AllowedIPs: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}},
+		Resolve: &ResolveConfig{ResolveStrategy: "ipv4"},
+	}, device.LogLevelSilent)
+	if err != nil {
+		t.Fatal("synthetic worker setup failed")
+	}
+	defer vt.Dev.Close()
+	if _, ok := vt.Dev.Bind().(*warpPocketJunkBind); !ok {
+		t.Fatal("StartWireguard did not install the common junk bind")
+	}
+	var public device.NoisePublicKey
+	copy(public[:], remote.PublicKey().Bytes())
+	peer := vt.Dev.LookupPeer(public)
+	if peer == nil {
+		t.Fatal("synthetic peer missing")
+	}
+	if err := peer.SendHandshakeInitiation(false); err != nil {
+		t.Fatal(err)
+	}
+	var source string
+	deadline := time.Now().Add(10 * time.Second)
+	for attempt := 0; attempt < 2; attempt++ {
+		for i := 0; i < 5; i++ {
+			packet, from := warpJunkRead(t, sink, deadline)
+			if source != "" && from.String() != source {
+				t.Fatal("worker retry changed UDP socket")
+			}
+			source = from.String()
+			if i < 4 {
+				if len(packet) < 64 || len(packet) >= 128 {
+					t.Fatal("worker junk outside bounds")
+				}
+			} else if len(packet) != 148 || packet[0] != 1 || !bytes.Equal(packet[1:4], []byte{17, 29, 43}) {
+				t.Fatal("worker initiation framing/Reserved changed")
+			}
+		}
+		if attempt == 0 {
+			// Throttled calls must not emit extra junk. The next observed train
+			// must come from the upstream retry timer, not this suppressed call.
+			if err := peer.SendHandshakeInitiation(true); err != nil {
+				t.Fatal(err)
+			}
+			if err := sink.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+				t.Fatal(err)
+			}
+			var buf [2048]byte
+			if _, _, err := sink.ReadFromUDP(buf[:]); err == nil {
+				t.Fatal("throttled initiation emitted junk")
+			} else if timeout, ok := err.(net.Error); !ok || !timeout.Timeout() {
+				t.Fatal(err)
+			}
+		}
+	}
+}

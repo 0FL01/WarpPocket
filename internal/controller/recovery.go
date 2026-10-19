@@ -106,6 +106,9 @@ func (c *Controller) monitor(ctx context.Context, id uint64, p model.Profile, ow
 		if !current {
 			return
 		}
+		if c.options.Log != nil {
+			c.options.Log(reason, owned.Endpoint)
+		}
 		oldEndpoint := owned.Endpoint
 		err = c.stop(owned)
 		owned = nil
@@ -148,6 +151,7 @@ func (c *Controller) monitorConnection(ctx context.Context, id uint64, owned *ba
 			return "proxy_exited", nil
 		}
 		_, err := c.health(ctx, owned.Port)
+		c.logHealthFailure(ctx, id, owned, err)
 		if model.Code(err) == "health_setup_failed" || model.Code(err) == "proxy_cleanup_failed" {
 			return "", err
 		}
@@ -170,6 +174,26 @@ func (c *Controller) monitorConnection(ctx context.Context, id uint64, owned *ba
 			return "connection_lost", nil
 		}
 		timer.Reset(c.options.HealthInterval)
+	}
+}
+
+func (c *Controller) logHealthFailure(ctx context.Context, id uint64, owned *backend.Instance, err error) {
+	if c.options.Log == nil {
+		return
+	}
+	code := model.Code(err)
+	switch code {
+	case "health_failed", "health_timeout", "health_tls", "warp_not_enabled", "external_unavailable", "health_response_large", "health_setup_failed", "proxy_cleanup_failed":
+	default:
+		return
+	}
+	// The check may have completed after Disconnect or a superseding session.
+	// Only its fixed code and endpoint can escape, never error text or mu.
+	c.mu.Lock()
+	current := c.sessionCurrent(ctx, id) && c.active == owned && c.state == model.Connected
+	c.mu.Unlock()
+	if current {
+		c.options.Log(code, owned.Endpoint)
 	}
 }
 
@@ -371,6 +395,9 @@ func (c *Controller) recover(ctx context.Context, id uint64, p model.Profile, ol
 		c.publishConnection(trial, latency, true)
 		c.mu.Unlock()
 		kept, trial = trial, nil
+		if c.options.Log != nil {
+			c.options.Log("recovered", kept.Endpoint)
+		}
 		return kept, nil
 	}
 }

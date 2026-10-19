@@ -24,7 +24,7 @@ func TestNativePreparationEnvironmentAndGates(t *testing.T) {
 	if result.Wireproxy != filepath.Join(root, "build", "deps", "wireproxy") || result.Wireguard != filepath.Join(root, "build", "deps", "wireguard-go") || result.Patch != supportedPatch {
 		t.Fatalf("wrong result: %+v", result)
 	}
-	if len(*calls) != 4 {
+	if len(*calls) != 5 {
 		t.Fatalf("wrong commands: %+v", *calls)
 	}
 	for index, call := range *calls {
@@ -47,17 +47,20 @@ func TestNativePreparationEnvironmentAndGates(t *testing.T) {
 		{"go", "mod", "download", "-json", wireguardModule + "@" + testPins(t).Wireguard.Version},
 		{"go", "test", "./tun/netstack", "-run", "^TestWarpPocketDNS", "-count=1", "-v"},
 		{"go", "test", ".", "./cmd/wireproxy", "-run", "^TestWarpPocketRouting", "-count=1", "-v"},
+		{"go", "test", ".", "-run", "^TestWarpPocketJunk", "-count=1", "-v"},
 	}
 	for index, want := range wantCommands {
 		if !reflect.DeepEqual((*calls)[index].Args, want) {
 			t.Errorf("command %d = %v, want %v", index, (*calls)[index].Args, want)
 		}
 	}
-	if filepath.Base((*calls)[2].Dir) != "wireguard-go" || filepath.Base((*calls)[3].Dir) != "wireproxy" {
+	if filepath.Base((*calls)[2].Dir) != "wireguard-go" || filepath.Base((*calls)[3].Dir) != "wireproxy" || filepath.Base((*calls)[4].Dir) != "wireproxy" {
 		t.Fatal("native gates ran in the wrong modules")
 	}
 	assertFile(t, filepath.Join(result.Wireguard, "tun", "netstack", "warppocket_dns.go"), mustPayload(t, "wireproxy_dns.go.txt"))
 	assertFile(t, filepath.Join(result.Wireproxy, "cmd", "wireproxy", "warppocket_worker_test.go"), mustPayload(t, "wireproxy_worker_test.go.txt"))
+	assertFile(t, filepath.Join(result.Wireproxy, "warppocket_junk.go"), mustPayload(t, "wireproxy_junk.go.txt"))
+	assertFile(t, filepath.Join(result.Wireproxy, "warppocket_junk_test.go"), mustPayload(t, "wireproxy_junk_test.go.txt"))
 	if _, err := p.prepare(context.Background(), root); err != nil {
 		t.Fatalf("repeat preparation is not safe/idempotent: %v", err)
 	}
@@ -68,7 +71,7 @@ func TestNativePreparationEnvironmentAndGates(t *testing.T) {
 }
 
 func TestNativeGateFailureAbortsPublication(t *testing.T) {
-	for _, gate := range []string{"native DNS tests", "native routing tests"} {
+	for _, gate := range []string{"native DNS tests", "native routing tests", "native junk tests"} {
 		t.Run(gate, func(t *testing.T) {
 			root, p, calls := mockPreparation(t, gate)
 			deps := filepath.Join(root, "build", "deps")
@@ -82,6 +85,9 @@ func TestNativeGateFailureAbortsPublication(t *testing.T) {
 			want := 3
 			if gate == "native routing tests" {
 				want = 4
+			}
+			if gate == "native junk tests" {
+				want = 5
 			}
 			if len(*calls) != want {
 				t.Fatalf("commands continued after failed gate: %v", *calls)
@@ -203,11 +209,11 @@ func mockPreparation(t *testing.T, failGate string) (string, preparer, *[]comman
 					t.Fatal(err)
 				}
 				return commandResult{Stdout: data}, nil
-			case "native DNS tests", "native routing tests":
+			case "native DNS tests", "native routing tests", "native junk tests":
 				if call.Label == failGate {
 					return commandResult{Stdout: []byte("FAIL fixture gate\n")}, fmt.Errorf("%s failed: fixture failure", call.Label)
 				}
-				if _, err := os.Stat(filepath.Join(root, "build", "deps", "wireproxy", "warppocket_routing.go")); err == nil && len(calls) <= 4 {
+				if _, err := os.Stat(filepath.Join(root, "build", "deps", "wireproxy", "warppocket_routing.go")); err == nil && len(calls) <= 5 {
 					t.Fatal("sources published before native gates completed")
 				}
 				return commandResult{Stdout: []byte("PASS fixture gate\n")}, nil

@@ -65,6 +65,8 @@ var sourcePayloads = []payloadSpec{
 	{"wireproxy_routing_test.go.txt", "proxy", "warppocket_routing_test.go", "wireproxy", "TestWarpPocketRoutingSOCKSProtocol"},
 	{"wireproxy_sandbox_test.go.txt", "proxy", "cmd/wireproxy/warppocket_sandbox_test.go", "worker", "TestWarpPocketRoutingNetworkSandbox"},
 	{"wireproxy_worker_test.go.txt", "proxy", "cmd/wireproxy/warppocket_worker_test.go", "worker_test", "TestWarpPocketRoutingWorkerEntry"},
+	{"wireproxy_junk.go.txt", "proxy", "warppocket_junk.go", "wireproxy", "newWarpPocketJunkBind"},
+	{"wireproxy_junk_test.go.txt", "proxy", "warppocket_junk_test.go", "wireproxy", "TestWarpPocketJunkInitiation"},
 }
 
 func planPatches(proxy, guard string, pins buildPins, readPayload func(string) ([]byte, error)) (map[string][]byte, error) {
@@ -144,8 +146,8 @@ func patchGoMod(text, version string) (string, error) {
 	return strings.TrimRight(text, "\n") + "\n\nreplace " + wireguardModule + " => ../wireguard-go\n", nil
 }
 
-// These are the same exact pinned anchors and replacements as the established
-// reserved/DNS/routing build. The only new transformation is the worker entry.
+// Exact pinned anchors retain the established Reserved/DNS/routing and worker
+// transformations. The common bind is wrapped before constructing the device.
 func pinnedPatches() []sourcePatch {
 	return []sourcePatch{
 		{"proxy", "config.go", []replacement{
@@ -250,6 +252,7 @@ const wireguardBindNew = `	bind := conn.NewDefaultBind()
 			bind.SetReservedForEndpoint(address, *deviceConf.Peers[0].Reserved)
 		}
 	}
+	bind = newWarpPocketJunkBind(bind)
 	dev := device.NewDevice(tun, bind, device.NewLogger(logLevel, ""))
 `
 

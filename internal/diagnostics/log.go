@@ -23,7 +23,10 @@ func New(paths storage.Paths) *Logger {
 
 func (l *Logger) Event(code string, endpoint model.Endpoint) {
 	// Do not accept arbitrary exception text, argv, profile objects or tokens.
-	if code != "connected" && code != "disconnected" && code != "connection_lost" {
+	switch code {
+	case "connected", "disconnected", "connection_lost", "proxy_exited", "recovered",
+		"health_failed", "health_timeout", "health_tls", "warp_not_enabled", "external_unavailable", "health_response_large", "health_setup_failed", "proxy_cleanup_failed":
+	default:
 		return
 	}
 	if endpoint.Host != "" && endpoint.Validate() != nil {
