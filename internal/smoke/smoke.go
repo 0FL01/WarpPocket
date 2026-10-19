@@ -74,11 +74,24 @@ func writeReport(path string, report Report) error {
 	return storage.AtomicWrite(path, data)
 }
 
+func cleanupWorkspace(path, workingDir string) error {
+	// The Windows common-file dialog can change the process working directory
+	// to the selected profile's directory, preventing its removal until we leave.
+	if err := os.Chdir(workingDir); err != nil {
+		return err
+	}
+	return os.RemoveAll(path)
+}
+
 // Run must execute on the GUI goroutine while main calls app.Main. The ready
 // report is emitted only after real frames and a live worker's SOCKS greeting.
 // In wait mode CI intentionally kills this GUI PID; normal exit is a failure.
 func Run(path string, wait bool) (result error) {
-	path, err := filepath.Abs(path)
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return model.E("smoke_workspace", "Не удалось подготовить проверку.")
+	}
+	path, err = filepath.Abs(path)
 	if err != nil {
 		return model.E("smoke_report", "Не удалось записать отчёт проверки.")
 	}
@@ -95,7 +108,7 @@ func Run(path string, wait bool) (result error) {
 			a.Close()
 		}
 		if report.Workspace != "" {
-			if err := os.RemoveAll(report.Workspace); err != nil && result == nil {
+			if err := cleanupWorkspace(report.Workspace, workingDir); err != nil && result == nil {
 				result = model.E("smoke_cleanup", "Не выполнена очистка проверки.")
 			}
 		}
