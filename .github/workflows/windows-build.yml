@@ -1,4 +1,4 @@
-name: Headless verification
+name: Verification
 
 on:
   push:
@@ -48,3 +48,9 @@ jobs:
         run: python scripts/fetch_vendor.py --platform ${{ matrix.platform }}
       - name: Offline tests including real helper lifecycle
         run: python -m unittest discover -s tests -v
+      - name: Install Xvfb
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: UI tests under Xvfb
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m unittest discover -s tests -p 'test_ui.py' -v
