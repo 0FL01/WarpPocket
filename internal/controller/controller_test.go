@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/0FL01/WarpPocket/internal/backend"
@@ -36,9 +37,10 @@ func (s *memoryStore) UpdateCache(update func(model.Cache) model.Cache) error {
 func (s *memoryStore) ClearRuntime() error { s.mu.Lock(); defer s.mu.Unlock(); s.clears++; return nil }
 
 type fakeProfiles struct {
-	mu    sync.Mutex
-	calls []string
-	err   error
+	mu            sync.Mutex
+	calls         []string
+	err           error
+	reservedCalls int
 }
 
 func (p *fakeProfiles) EnsureProfile(ctx context.Context, role string, consent bool) (model.Profile, error) {
@@ -48,16 +50,21 @@ func (p *fakeProfiles) EnsureProfile(ctx context.Context, role string, consent b
 	return model.Profile{}, p.err
 }
 func (p *fakeProfiles) EnsureReserved(ctx context.Context, role string) (model.Profile, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.reservedCalls++
 	return model.Profile{Endpoint: model.Endpoint{Host: "188.114.96.1", Port: 4500}}, ctx.Err()
 }
 
 type workers struct {
-	mu          sync.Mutex
-	live        map[*backend.Instance]bool
-	started     int
-	stopGate    <-chan struct{}
-	stopStarted chan struct{}
-	once        sync.Once
+	mu                      sync.Mutex
+	live                    map[*backend.Instance]bool
+	started                 int
+	stopGate                <-chan struct{}
+	stopStarted             chan struct{}
+	once                    sync.Once
+	stopError               func(*backend.Instance) error
+	maximum, maximumPrimary int
 }
 
 func (b *workers) Start(ctx context.Context, p model.Profile, e model.Endpoint, role string, port int) (*backend.Instance, error) {
@@ -69,11 +76,30 @@ func (b *workers) Start(ctx context.Context, p model.Profile, e model.Endpoint, 
 	i := &backend.Instance{Endpoint: e, Port: port, Role: role}
 	b.live[i] = true
 	b.started++
+	live, primary := 0, 0
+	for instance, alive := range b.live {
+		if alive {
+			live++
+			if instance.Role == model.Primary {
+				primary++
+			}
+		}
+	}
+	b.maximum = max(b.maximum, live)
+	b.maximumPrimary = max(b.maximumPrimary, primary)
 	return i, nil
 }
 func (b *workers) Stop(i *backend.Instance) error {
 	if i == nil {
 		return nil
+	}
+	b.mu.Lock()
+	stopError := b.stopError
+	b.mu.Unlock()
+	if stopError != nil {
+		if err := stopError(i); err != nil {
+			return err
+		}
 	}
 	if b.stopStarted != nil {
 		b.once.Do(func() { close(b.stopStarted) })
@@ -362,12 +388,15 @@ func TestOldMonitorCannotTouchNewConnection(t *testing.T) {
 	wait(t, func() bool { return c.Status().State == model.Connected })
 	c.mu.Lock()
 	old := c.active
+	oldID := c.sessionID
 	c.mu.Unlock()
 	c.Disconnect()
 	wait(t, func() bool { return !c.Status().Busy })
 	c.Connect(false)
 	wait(t, func() bool { return c.Status().State == model.Connected })
-	c.monitorFailure(context.Background(), old, "connection_lost", "stale")
+	if _, current := c.beginRecovery(context.Background(), oldID, old); current {
+		t.Fatal("stale monitor entered recovery for a newer session")
+	}
 	c.mu.Lock()
 	current := c.active
 	c.mu.Unlock()
@@ -375,21 +404,47 @@ func TestOldMonitorCannotTouchNewConnection(t *testing.T) {
 		t.Fatal("stale monitor changed newer connection")
 	}
 }
-func TestTwoHealthFailuresStopPrimary(t *testing.T) {
-	c, _, _, b, _ := fixture(t, Options{HealthInterval: 5 * time.Millisecond})
-	c.health = func(context.Context, int) (float64, error) { return 0, model.E("health_timeout", "timeout") }
-	c.Connect(false)
-	wait(t, func() bool { return c.Status().State == model.Failed && !c.Status().Busy })
-	if c.Status().Code != "connection_lost" {
-		t.Fatal("wrong monitor failure")
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for _, live := range b.live {
-		if live {
-			t.Fatal("lost primary still alive")
+func TestTwoHealthFailuresStopAndAutomaticallyReplacePrimary(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, _, profiles, b, _ := fixture(t, Options{HealthInterval: time.Second})
+		checks := 0
+		c.health = func(context.Context, int) (float64, error) {
+			checks++
+			if checks <= 2 {
+				return 0, model.E("health_timeout", "timeout")
+			}
+			return 1, nil
 		}
-	}
+		c.Connect(false)
+		synctest.Wait()
+		c.mu.Lock()
+		old := c.active
+		c.mu.Unlock()
+		if old == nil {
+			t.Fatal("initial primary missing")
+		}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if !b.alive(old) || c.Status().State != model.Connected {
+			t.Fatal("one failure stopped primary")
+		}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		c.mu.Lock()
+		replacement := c.active
+		c.mu.Unlock()
+		if replacement == nil || replacement == old || b.alive(old) || !b.alive(replacement) || replacement.Port != 25344 || c.Status().Recovering {
+			t.Fatal("two failures did not replace the owned primary automatically")
+		}
+		profiles.mu.Lock()
+		defer profiles.mu.Unlock()
+		if len(profiles.calls) != 1 || profiles.reservedCalls != 1 {
+			t.Fatal("recovery repeated profile/API preparation")
+		}
+		if b.maximumPrimary != 1 {
+			t.Fatal("primary identities overlapped")
+		}
+	})
 }
 func TestConcurrentCloseWaitsForOwnedCleanup(t *testing.T) {
 	c, s, _, b, _ := fixture(t, Options{})

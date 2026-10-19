@@ -54,6 +54,10 @@ type View struct {
 	importRequest               string
 	diagnostics                 func() string
 	licenses                    string
+	// Recovery supersedes the old probe. Only a subsequent search_started can
+	// make its consent/progress/results current again; a late cancellation cannot.
+	ignoreSearchEvents, ignoreNotices bool
+	resetConsentInput                 bool
 }
 
 func NewView(controller Controller, diagnostics func() string, licenses string) *View {
@@ -64,20 +68,84 @@ func NewView(controller Controller, diagnostics func() string, licenses string) 
 }
 
 func (v *View) Update() {
+	// Read the snapshot after draining events: a recovery can start and finish
+	// between frames, and Status/PollEvents are deliberately not one transaction.
+	wasRecovering := v.state.Recovering
+	events := v.controller.PollEvents()
 	v.state = v.controller.Status()
-	for _, e := range v.controller.PollEvents() {
+	if v.closing {
+		v.invalidateOperation()
+		v.info, v.importRequest, v.menuOpen = "", "", false
+		return
+	}
+	if wasRecovering != v.state.Recovering {
+		v.invalidateOperation()
+	}
+	recovering := wasRecovering
+	for _, e := range events {
 		switch e.Type {
-		case "state", "error":
+		case "state":
+			switch e.Code {
+			case "recovery_started":
+				recovering = true
+				v.invalidateOperation()
+				continue
+			case "recovered":
+				recovering = false
+				v.invalidateOperation()
+				if v.state.State == model.Connected && !v.state.Recovering {
+					v.notice = "Соединение восстановлено."
+				}
+				continue
+			case "consent_required":
+				if !recovering && !v.state.Recovering && !v.ignoreNotices && v.state.State != model.Connected && v.state.State != model.Connecting {
+					v.openConsent(model.Primary)
+				}
+				continue
+			}
+			switch e.State {
+			case model.Connecting:
+				if e.Code == "" {
+					recovering = false
+					v.invalidateOperation()
+					v.ignoreNotices = false // A new manual, one-shot connection.
+				}
+			case model.Disconnected, model.Failed:
+				// Do not overlay a newer recovered snapshot with a queued old
+				// stopped/error state. The current terminal outcome still wins.
+				if e.State == v.state.State && e.Code == v.state.Code && !v.state.Recovering {
+					recovering = false
+					v.invalidateOperation()
+					v.notice = e.Message
+				}
+			case model.Connected:
+				if !recovering && !v.state.Recovering {
+					v.clearConsentAndProgress()
+				}
+			}
+		case "error":
+			if recovering || v.state.Recovering || v.ignoreNotices {
+				continue
+			}
 			if e.Code == "consent_required" {
-				v.consent = model.Primary
-				v.ack.Value = false
+				if v.state.State != model.Connected && v.state.State != model.Connecting {
+					v.openConsent(model.Primary)
+				}
 			} else if e.Message != "" {
 				v.notice = e.Message
 			}
 		case "search_started":
-			v.completed, v.limit, v.found = 0, 0, 0
+			if recovering || v.state.Recovering || v.state.State == model.Connecting {
+				continue
+			}
+			v.clearConsentAndProgress()
+			v.notice = ""
+			v.ignoreSearchEvents, v.ignoreNotices = false, false
 			v.progressEndpoint = "Подготавливаем профиль…"
 		case "connect_progress", "search_progress":
+			if recovering || v.state.Recovering || e.Type == "search_progress" && v.ignoreSearchEvents || e.Type == "connect_progress" && v.ignoreNotices {
+				continue
+			}
 			v.completed = e.Checked
 			if e.Stage == "trying" && v.completed > 0 {
 				v.completed--
@@ -90,11 +158,18 @@ func (v *View) Update() {
 			}
 			v.progressEndpoint = e.Endpoint.String()
 		case "search_cancelled":
+			if recovering || v.state.Recovering || v.ignoreSearchEvents {
+				continue
+			}
 			v.notice = "Поиск отменён; сохранённые варианты не изменены."
 		case "search_done":
+			if recovering || v.state.Recovering || v.ignoreSearchEvents {
+				continue
+			}
 			if e.Code == "consent_required" {
-				v.consent = model.Probe
-				v.ack.Value = false
+				if v.state.State == model.Connected {
+					v.openConsent(model.Probe)
+				}
 			} else if e.Saved {
 				v.notice = "Сохранено для следующего подключения: " + e.Best.String()
 			} else if e.Message != "" {
@@ -105,14 +180,41 @@ func (v *View) Update() {
 		case "warning":
 			v.notice = e.Message
 		case "saved":
-			v.notice = "Стратегия сохранена для следующего подключения."
+			if !recovering && !v.state.Recovering && !v.ignoreNotices {
+				v.notice = "Стратегия сохранена для следующего подключения."
+			}
 		}
 	}
+	if v.state.Recovering {
+		v.ignoreSearchEvents, v.ignoreNotices = true, true
+		v.clearConsentAndProgress()
+	}
+}
+
+func (v *View) clearConsentAndProgress() {
+	v.consent, v.progressEndpoint = "", ""
+	v.ack.Value = false
+	v.resetConsentInput = true
+	v.completed, v.limit, v.found = 0, 0, 0
+}
+
+func (v *View) invalidateOperation() {
+	v.clearConsentAndProgress()
+	v.notice, v.importRequest = "", ""
+	v.ignoreSearchEvents, v.ignoreNotices = true, true
+}
+
+func (v *View) openConsent(role string) {
+	v.clearConsentAndProgress()
+	v.consent = role
 }
 
 func (v *View) labels() (title, help, action string, dot color.NRGBA) {
 	switch v.state.State {
 	case model.Connecting:
+		if v.state.Recovering && !v.closing {
+			return "Восстанавливаем соединение…", "Прокси временно недоступен. Ищем рабочее соединение WARP.", "Отключиться", blue
+		}
 		return "Подключаемся…", "Проверяем WARP и доступность интернета.", "Отменить", blue
 	case model.Connected:
 		return "Подключено через WARP", "Прокси готов. Настройте SOCKS5 в нужном приложении.", "Отключиться", green
@@ -142,8 +244,11 @@ func (v *View) connectAction() {
 		return
 	}
 	if v.state.State == model.Connected || v.state.State == model.Connecting {
+		v.invalidateOperation()
 		v.controller.Disconnect()
 	} else {
+		v.invalidateOperation()
+		v.ignoreNotices = false
 		v.controller.Connect(false)
 	}
 }
@@ -194,6 +299,17 @@ func (v *View) button(gtx layout.Context, button *widget.Clickable, text string,
 
 func (v *View) Layout(gtx layout.Context) layout.Dimensions {
 	paint.Fill(gtx.Ops, white)
+	if v.resetConsentInput || v.consent == "" {
+		// Hidden or superseded consent must not retain queued clicks/checkbox
+		// input that could acknowledge a later, genuinely new probe request.
+		for v.accept.Clicked(gtx) {
+		}
+		for v.decline.Clicked(gtx) {
+		}
+		v.ack.Update(gtx)
+		v.ack.Value = false
+		v.resetConsentInput = false
+	}
 	for {
 		e, ok := gtx.Event(key.Filter{Name: key.NameEscape})
 		if !ok {
@@ -229,7 +345,7 @@ func (v *View) Layout(gtx layout.Context) layout.Dimensions {
 				switch i {
 				case 0, 1:
 					if !v.quiescent() {
-						v.info = "Отключитесь и дождитесь завершения операций перед импортом."
+						continue
 					} else if i == 0 {
 						v.importRequest = model.Primary
 					} else {
@@ -265,7 +381,7 @@ func (v *View) Layout(gtx layout.Context) layout.Dimensions {
 func (v *View) mainLayout(gtx layout.Context) layout.Dimensions {
 	title, help, action, dot := v.labels()
 	search := "Найти новую стратегию"
-	if v.state.Searching {
+	if v.state.Searching && !v.state.Recovering {
 		search = "Отменить поиск"
 	}
 	copyText := "Копировать"
@@ -330,7 +446,7 @@ func (v *View) mainLayout(gtx layout.Context) layout.Dimensions {
 							return v.button(gtx, &v.search, search, 16, v.searchEnabled())
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							if v.state.Searching || v.state.State == model.Connecting {
+							if !v.closing && (v.state.Searching || v.state.State == model.Connecting) {
 								return layout.Inset{Top: 14}.Layout(gtx, v.progress)
 							}
 							return layout.Dimensions{}
@@ -350,22 +466,29 @@ func (v *View) endpointText() string {
 	}
 	return "Активный endpoint: —"
 }
+func (v *View) progressPresentation() (head, endpoint string, determinate bool) {
+	if v.state.Recovering {
+		return "Восстанавливаем соединение…", "", false
+	}
+	head, endpoint = "Проверка подключения…", v.progressEndpoint
+	if v.state.Searching {
+		if v.limit > 0 {
+			return fmt.Sprintf("Проверено %d / %d · найдено %d", v.completed, v.limit, v.found), endpoint, true
+		}
+		head = "Подготавливаем поиск…"
+	}
+	return head, endpoint, false
+}
+
 func (v *View) progress(gtx layout.Context) layout.Dimensions {
 	return widget.Border{Color: border, Width: 1}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(11).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			head := "Проверка подключения…"
-			if v.state.Searching {
-				if v.limit > 0 {
-					head = fmt.Sprintf("Проверено %d / %d · найдено %d", v.completed, v.limit, v.found)
-				} else {
-					head = "Подготавливаем поиск…"
-				}
-			}
+			head, endpoint, determinate := v.progressPresentation()
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(v.label(13, head, ink, false)), gap(8), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				width, height := gtx.Constraints.Max.X, gtx.Dp(10)
 				paint.FillShape(gtx.Ops, rgb(0xf3f6fb), clip.Rect{Max: image.Pt(width, height)}.Op())
 				start, fill := 0, width/4
-				if v.state.Searching && v.limit > 0 {
+				if determinate {
 					fill = width * min(v.completed, v.limit) / v.limit
 				} else if width > 0 {
 					// Indeterminate activity, not a fabricated percentage or count.
@@ -375,7 +498,7 @@ func (v *View) progress(gtx layout.Context) layout.Dimensions {
 					paint.FillShape(gtx.Ops, yellow, clip.Rect{Min: image.Pt(x, 0), Max: image.Pt(min(x+gtx.Dp(10), width, start+fill), height)}.Op())
 				}
 				return layout.Dimensions{Size: image.Pt(width, height)}
-			}), gap(7), layout.Rigid(v.label(12, v.progressEndpoint, muted, false)))
+			}), gap(7), layout.Rigid(v.label(12, endpoint, muted, false)))
 		})
 	})
 }
@@ -389,7 +512,7 @@ func (v *View) menuLayout(gtx layout.Context) layout.Dimensions {
 			for i, label := range labels {
 				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					gtx.Constraints.Min.X = gtx.Constraints.Max.X
-					return v.button(gtx, &v.items[i], label, 14, !v.closing)
+					return v.button(gtx, &v.items[i], label, 14, !v.closing && (i >= 2 || v.quiescent()))
 				}))
 			}
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
@@ -406,7 +529,7 @@ func (v *View) modal(gtx layout.Context) layout.Dimensions {
 		v.info = ""
 	}
 	for v.accept.Clicked(gtx) {
-		if v.ack.Value && v.consent != "" && !v.closing {
+		if v.ack.Value && v.consent != "" && !v.closing && !v.state.Recovering {
 			role := v.consent
 			v.consent = ""
 			v.ack.Value = false

@@ -52,9 +52,10 @@ func (d *deniedAPI) Reserved(context.Context, profile.Account) ([3]byte, error) 
 
 type observed struct {
 	*backend.Backend
-	mu        sync.Mutex
-	instances []*backend.Instance
-	maximum   int
+	mu                   sync.Mutex
+	instances            []*backend.Instance
+	maximum              int
+	maxPrimary, maxProbe int
 }
 
 // Connection keeps the actual application's 180-second candidate budget. Only
@@ -77,16 +78,29 @@ func (b *observed) Start(ctx context.Context, p model.Profile, e model.Endpoint,
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.instances = append(b.instances, i)
-	n := 0
+	n, primaries, probes := 0, 0, 0
 	for _, instance := range b.instances {
 		if instance.Process.Alive() {
 			n++
+			if instance.Role == model.Primary {
+				primaries++
+			} else if instance.Role == model.Probe {
+				probes++
+			}
 		}
 	}
 	if n > b.maximum {
 		b.maximum = n
 	}
+	b.maxPrimary = max(b.maxPrimary, primaries)
+	b.maxProbe = max(b.maxProbe, probes)
 	return i, nil
+}
+
+func (b *observed) workerCounts() (all, primary, probe int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.maximum, b.maxPrimary, b.maxProbe
 }
 func (b *observed) primary() *backend.Instance {
 	b.mu.Lock()
@@ -111,7 +125,7 @@ func await(t *testing.T, deadline time.Duration, check func() bool) {
 	t.Fatal("acceptance deadline exceeded")
 }
 
-func TestExistingProfilesGoEngineAndController(t *testing.T) {
+func TestExistingProfilesAutomaticRecovery(t *testing.T) {
 	root, executable := os.Getenv("WARPPOCKET_E2E_DATA"), os.Getenv("WARPPOCKET_E2E_EXE")
 	if root == "" || executable == "" {
 		t.Skip("set explicit WARPPOCKET_E2E_DATA and WARPPOCKET_E2E_EXE to opt in")
@@ -178,10 +192,15 @@ func TestExistingProfilesGoEngineAndController(t *testing.T) {
 		if api.calls.Load() != 0 {
 			t.Error("acceptance attempted a forbidden API call")
 		}
-		report["profiles_unchanged"], report["cleanup_verified"], report["max_workers"] = unchanged, clean, b.maximum
+		maximum, maxPrimary, maxProbe := b.workerCounts()
+		if maximum > 2 || maxPrimary > 1 || maxProbe > 1 {
+			t.Error("primary/probe identity workers overlapped")
+		}
+		report["profiles_unchanged"], report["cleanup_verified"], report["max_workers"] = unchanged, clean, maximum
+		report["max_primary"], report["max_probe"] = maxPrimary, maxProbe
 		report["passed"] = !t.Failed()
 		data, _ := json.MarshalIndent(report, "", "  ")
-		if storage.AtomicWrite(filepath.Join(root, "go-migration-gate-2026-10-19.json"), data) != nil {
+		if storage.AtomicWrite(filepath.Join(root, "autorecovery-gate-2026-10-19.json"), data) != nil {
 			t.Error("safe report write failed")
 		}
 		t.Log(string(data))
@@ -234,7 +253,8 @@ func TestExistingProfilesGoEngineAndController(t *testing.T) {
 	<-done
 	report["primary_requests"], report["primary_failures"], report["search_seconds"] = requests.Load(), failures.Load(), time.Since(started).Seconds()
 	report["primary_stream_connections"] = dialCount.Load()
-	if requests.Load() == 0 || failures.Load() != 0 || dialCount.Load() != 1 || b.maximum > 2 {
+	maximum, maxPrimary, maxProbe := b.workerCounts()
+	if requests.Load() == 0 || failures.Load() != 0 || dialCount.Load() != 1 || maximum > 2 || maxPrimary > 1 || maxProbe > 1 {
 		t.Fatal("probe disrupted primary traffic/ownership")
 	}
 	if b.primary() != primary || primary.PID() != pid || c.Status().State != model.Connected {
@@ -257,6 +277,41 @@ func TestExistingProfilesGoEngineAndController(t *testing.T) {
 		t.Fatal("final WARP/independent HTTPS failed")
 	}
 	report["direct_host_socket_proof"], report["ip_only_stays_warp"] = true, true
+
+	// Probe continuity and routing above deliberately precede the restart. A
+	// worker's TCP sessions cannot migrate; prove a NEW verified primary instead
+	// of accepting the stale Connected snapshot immediately after process exit.
+	continuous.CloseIdleConnections()
+	started = time.Now()
+	if err := manager.Stop(primary.Process); err != nil {
+		t.Fatal("could not stop the owned primary for recovery")
+	}
+	await(t, 250*time.Second, func() bool {
+		next, status := b.primary(), c.Status()
+		return next != nil && next != primary && next.PID() != pid && next.Port == backend.SOCKSPort &&
+			status.State == model.Connected && !status.Recovering && status.Endpoint == next.Endpoint
+	})
+	recovered := b.primary()
+	if recovered == nil || primary.Process.Alive() {
+		t.Fatal("primary replacement was not exclusive")
+	}
+	if _, err := health.Check(context.Background(), recovered.Port); err != nil {
+		t.Fatal("recovered WARP/independent HTTPS failed")
+	}
+	recoveryStarted, recoverySucceeded := false, false
+	for _, event := range c.PollEvents() {
+		recoveryStarted = recoveryStarted || event.Code == "recovery_started"
+		recoverySucceeded = recoverySucceeded || event.Code == "recovered"
+	}
+	if !recoveryStarted || !recoverySucceeded {
+		t.Fatal("the new primary did not traverse automatic recovery")
+	}
+	maximum, maxPrimary, maxProbe = b.workerCounts()
+	if maximum > 2 || maxPrimary > 1 || maxProbe > 1 {
+		t.Fatal("recovery exceeded identity worker limits")
+	}
+	report["automatic_recovery"], report["recovered_new_pid"], report["fixed_port_preserved"], report["recovered_https"] = true, true, true, true
+	report["recovered_endpoint"], report["recovery_seconds"] = recovered.Endpoint.String(), time.Since(started).Seconds()
 }
 
 func continuousPrimary(t *testing.T, port int) (*http.Transport, func(context.Context) error, *atomic.Int32) {

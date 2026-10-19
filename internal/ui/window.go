@@ -73,7 +73,7 @@ func Run(controller Controller, options Options) error {
 			return
 		}
 		v.closing = true
-		v.consent = ""
+		v.invalidateOperation()
 		v.info = ""
 		v.menuOpen = false
 		go func() { controller.Close(); close(closed); w.Invalidate() }()

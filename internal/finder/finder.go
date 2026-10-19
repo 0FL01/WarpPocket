@@ -66,6 +66,32 @@ func (f *Finder) budget(ctx context.Context) (context.Context, context.CancelFun
 	return budget, cancel, nil
 }
 
+// Socket deadlines can fire before a context's timer goroutine sets Err. A
+// partial final trial must not be reported as fully failed or kept as verified.
+func contextFailure(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if end, ok := ctx.Deadline(); ok && !time.Now().Before(end) {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+// Only post-launch readiness failures are endpoint trials. Local/unknown start
+// failures remain terminal even if cancellation or the trial budget also fires.
+func terminalStartup(err error, parent, budget context.Context) error {
+	switch model.Code(err) {
+	case "proxy_start_failed", "proxy_start_timeout":
+		return nil
+	case "cancelled", "timeout":
+		if contextFailure(parent) != nil || contextFailure(budget) != nil {
+			return nil
+		}
+	}
+	return err
+}
+
 // A context may expire during a socket read. Its callback owns only this trial;
 // keep atomically detaches a verified primary before its old deadline expires.
 type trial struct {
@@ -112,7 +138,7 @@ func (t *trial) release() error {
 }
 func (t *trial) keep() error {
 	t.mu.Lock()
-	if err := t.ctx.Err(); err != nil {
+	if err := contextFailure(t.ctx); err != nil {
 		t.mu.Unlock()
 		return err
 	}
@@ -136,10 +162,10 @@ func (f *Finder) Search(ctx context.Context, p model.Profile, role string, cache
 		return out, err
 	}
 	for _, endpoint := range candidates {
-		if ctx.Err() != nil {
+		if contextFailure(ctx) != nil {
 			return Outcome{Checked: out.Checked, Cancelled: true}, nil
 		}
-		if budget.Err() != nil {
+		if contextFailure(budget) != nil {
 			break
 		}
 		out.Checked++
@@ -147,47 +173,52 @@ func (f *Finder) Search(ctx context.Context, p model.Profile, role string, cache
 			progress(model.Event{Stage: "trying", Endpoint: endpoint, Checked: out.Checked, Limit: f.options.Limit, Found: model.Count(len(out.Results))})
 		}
 		instance, trialErr := f.backend.Start(budget, p, endpoint, role, 0)
-		if trialErr == nil && instance != nil {
-			t := watch(budget, f.backend, instance)
-			var latency float64
-			latency, trialErr = f.health(budget, instance.Port)
-			if budget.Err() != nil {
-				trialErr = budget.Err()
+		var latency float64
+		if trialErr != nil {
+			if instance != nil {
+				if cleanupErr := f.backend.Stop(instance); cleanupErr != nil {
+					return out, cleanupErr
+				}
 			}
+			if fatal := terminalStartup(trialErr, ctx, budget); fatal != nil {
+				return out, fatal
+			}
+		} else if instance != nil {
+			t := watch(budget, f.backend, instance)
+			latency, trialErr = f.health(budget, instance.Port)
 			if trialErr == nil && !f.Alive(instance) {
 				trialErr = model.E("proxy_exited", "Прокси завершился во время проверки.")
 			}
 			if cleanupErr := t.release(); cleanupErr != nil {
 				return out, cleanupErr
 			}
-			if trialErr == nil {
-				out.Results = append(out.Results, model.NewResult(endpoint, latency, role))
-				if progress != nil {
-					progress(model.Event{Stage: "found", Endpoint: endpoint, Checked: out.Checked, Limit: f.options.Limit, Found: model.Count(len(out.Results))})
-				}
+			if model.Code(trialErr) == "health_setup_failed" {
+				return out, trialErr
 			}
-		} else if trialErr == nil {
+		} else {
 			return out, argumentsError()
 		}
-		if ctx.Err() != nil {
+		if contextFailure(ctx) != nil {
 			return Outcome{Checked: out.Checked, Cancelled: true}, nil
 		}
-		if budget.Err() != nil {
+		if contextFailure(budget) != nil {
 			break
 		}
 		if trialErr != nil {
-			if model.Code(trialErr) == "port_busy" {
-				return out, trialErr
-			}
 			if progress != nil {
 				progress(model.Event{Stage: "failed", Endpoint: endpoint, Checked: out.Checked, Limit: f.options.Limit, Code: model.Code(trialErr)})
+			}
+		} else {
+			out.Results = append(out.Results, model.NewResult(endpoint, latency, role))
+			if progress != nil {
+				progress(model.Event{Stage: "found", Endpoint: endpoint, Checked: out.Checked, Limit: f.options.Limit, Found: model.Count(len(out.Results))})
 			}
 		}
 		if len(out.Results) >= f.options.Keep {
 			break
 		}
 	}
-	if ctx.Err() != nil {
+	if contextFailure(ctx) != nil {
 		return Outcome{Checked: out.Checked, Cancelled: true}, nil
 	}
 	sort.SliceStable(out.Results, func(i, j int) bool { return out.Results[i].LatencyMS < out.Results[j].LatencyMS })
@@ -202,10 +233,10 @@ func (f *Finder) Connect(ctx context.Context, p model.Profile, candidates []mode
 	defer cancel()
 	checked := 0
 	for _, endpoint := range candidates {
-		if ctx.Err() != nil {
-			return nil, 0, checked, ctx.Err()
+		if err := contextFailure(ctx); err != nil {
+			return nil, 0, checked, err
 		}
-		if budget.Err() != nil || checked == DefaultLimit {
+		if contextFailure(budget) != nil || checked == DefaultLimit {
 			break
 		}
 		if err := endpoint.Validate(); err != nil {
@@ -216,7 +247,16 @@ func (f *Finder) Connect(ctx context.Context, p model.Profile, candidates []mode
 			progress(model.Event{Stage: "trying", Endpoint: endpoint, Checked: checked})
 		}
 		instance, trialErr := f.backend.Start(budget, p, endpoint, model.Primary, backend.SOCKSPort)
-		if trialErr == nil && instance != nil {
+		if trialErr != nil {
+			if instance != nil {
+				if cleanupErr := f.backend.Stop(instance); cleanupErr != nil {
+					return nil, 0, checked, cleanupErr
+				}
+			}
+			if fatal := terminalStartup(trialErr, ctx, budget); fatal != nil {
+				return nil, 0, checked, fatal
+			}
+		} else if instance != nil {
 			t := watch(budget, f.backend, instance)
 			latency, verifyErr := f.health(budget, instance.Port)
 			trialErr = verifyErr
@@ -229,23 +269,23 @@ func (f *Finder) Connect(ctx context.Context, p model.Profile, candidates []mode
 			if cleanupErr := t.release(); cleanupErr != nil {
 				return nil, 0, checked, cleanupErr
 			}
+			if model.Code(trialErr) == "health_setup_failed" {
+				return nil, 0, checked, trialErr
+			}
 			if trialErr == nil {
 				if progress != nil {
 					progress(model.Event{Stage: "found", Endpoint: endpoint, Checked: checked})
 				}
 				return instance, latency, checked, nil
 			}
-		} else if trialErr == nil {
+		} else {
 			return nil, 0, checked, argumentsError()
 		}
-		if ctx.Err() != nil {
-			return nil, 0, checked, ctx.Err()
+		if err := contextFailure(ctx); err != nil {
+			return nil, 0, checked, err
 		}
-		if budget.Err() != nil {
+		if contextFailure(budget) != nil {
 			break
-		}
-		if model.Code(trialErr) == "port_busy" || model.Code(trialErr) == "cancelled" {
-			return nil, 0, checked, trialErr
 		}
 		if progress != nil {
 			progress(model.Event{Stage: "failed", Endpoint: endpoint, Checked: checked, Code: model.Code(trialErr)})

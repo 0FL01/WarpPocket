@@ -266,6 +266,80 @@ func TestSavedProfileAndReservedNeverUseAPI(t *testing.T) {
 	}
 }
 
+func TestExistingAndImportedKeepaliveValuesAreNotDefaultedOrRewritten(t *testing.T) {
+	for _, tc := range []struct {
+		name, field string
+		want        int
+	}{
+		{"absent", "", 0},
+		{"disabled", "PersistentKeepalive = 0\n", 0},
+		{"nondefault", "PersistentKeepalive = 17\n", 17},
+	} {
+		for _, imported := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/imported=%t", tc.name, imported), func(t *testing.T) {
+				store := profileStore(t)
+				api := &fakeAPI{}
+				service := NewService(store, api)
+				text := strings.Replace(fixtureProfile(0), "PersistentKeepalive = 25\n", tc.field, 1) + "Reserved = 0, 0, 0\n# retained saved formatting\n"
+				if imported {
+					if err := service.Import([]byte(text), model.Primary); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					writeFixture(t, store, model.Primary, "profile.conf", text)
+				}
+				path := service.profilePath(model.Primary)
+				before, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, load := range []func() (model.Profile, error){
+					func() (model.Profile, error) { return service.Load(model.Primary) },
+					func() (model.Profile, error) {
+						return service.EnsureProfile(context.Background(), model.Primary, false)
+					},
+					func() (model.Profile, error) { return service.EnsureReserved(context.Background(), model.Primary) },
+				} {
+					p, err := load()
+					if err != nil || p.Keepalive != tc.want {
+						t.Fatal("existing/imported keepalive value was changed")
+					}
+					rendered, err := Render(p, &model.Endpoint{Host: "192.0.2.1", Port: 500})
+					if err != nil || mustParse(t, rendered).Keepalive != tc.want {
+						t.Fatal("runtime endpoint render changed keepalive")
+					}
+				}
+				if after, err := os.ReadFile(path); err != nil || string(after) != string(before) {
+					t.Fatal("loading an existing/imported profile rewrote its bytes")
+				}
+				if api.posts.Load()+api.gets.Load()+api.reserves.Load() != 0 {
+					t.Fatal("loading an existing/imported profile made an API call")
+				}
+			})
+		}
+	}
+}
+
+func TestServiceDoesNotApplyNativeKeepaliveDefaultToOtherGenerators(t *testing.T) {
+	store := profileStore(t)
+	if err := writeAccount(filepath.Join(store.Paths.ProfileDir(model.Primary), "account.toml"), fixtureAccount(0)); err != nil {
+		t.Fatal(err)
+	}
+	api := &fakeAPI{generate: func(context.Context, Account) (model.Profile, error) {
+		p := mustParse(t, fixtureProfile(0))
+		p.Keepalive = 0
+		return p, nil
+	}}
+	service := NewService(store, api)
+	p, err := service.EnsureProfile(context.Background(), model.Primary, false)
+	if err != nil || p.Keepalive != 0 || api.posts.Load() != 0 || api.gets.Load() != 1 {
+		t.Fatal("service defaulted an explicitly disabled keepalive from another generator")
+	}
+	if loaded, err := service.Load(model.Primary); err != nil || loaded.Keepalive != 0 {
+		t.Fatal("service did not save the generator's original keepalive value")
+	}
+}
+
 func TestExplicitConsentAndIncompleteAccountsNeverRegister(t *testing.T) {
 	for _, existing := range []string{"none", "corrupt account", "empty account", "marker", "oversize account"} {
 		t.Run(existing, func(t *testing.T) {

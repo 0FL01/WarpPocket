@@ -153,7 +153,7 @@ func (c *Client) Generate(ctx context.Context, account Account) (model.Profile, 
 	if !ok {
 		return fail()
 	}
-	p := model.Profile{PrivateKey: account.PrivateKey, PublicKey: config.Peers[0].PublicKey, DNS: []string{"1.1.1.1", "1.0.0.1"}, AllowedIPs: []string{"0.0.0.0/0"}, MTU: 1280, Reserved: &reserved}
+	p := model.Profile{PrivateKey: account.PrivateKey, PublicKey: config.Peers[0].PublicKey, DNS: []string{"1.1.1.1", "1.0.0.1"}, AllowedIPs: []string{"0.0.0.0/0"}, MTU: 1280, Keepalive: 25, Reserved: &reserved}
 	v4, err := apiAddress(config.Interface.Addresses.V4, false)
 	if err != nil {
 		return fail()

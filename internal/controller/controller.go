@@ -50,11 +50,15 @@ type Controller struct {
 	closeDone                                 chan struct{}
 	closed, disconnecting, cleanupFailed      bool
 	closeErr                                  error
+	cleanupErr                                error
 	state                                     model.State
+	recovering                                bool
 	code, message                             string
 	active                                    *backend.Instance
 	result                                    *model.CheckResult
 	sequence, connectID, searchID             uint64
+	sessionID                                 uint64
+	sessionDone, searchDone                   chan struct{}
 	connectCancel, searchCancel, healthCancel context.CancelFunc
 	searchRole                                string
 	events                                    []model.Event
@@ -76,7 +80,8 @@ func (c *Controller) Status() model.Snapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	s := model.Snapshot{State: c.state, Code: c.code, Message: c.message, Searching: c.searchID != 0,
-		Busy: c.disconnecting || c.cleanupFailed || c.connectCancel != nil && c.state != model.Connected, SearchRole: c.searchRole}
+		Busy:       c.disconnecting || c.cleanupFailed || c.recovering || c.connectCancel != nil && c.state != model.Connected || c.sessionID != 0 && c.state != model.Connected,
+		Recovering: c.recovering, SearchRole: c.searchRole}
 	if c.result != nil {
 		s.Endpoint = c.result.Endpoint
 		s.LatencyMS = c.result.LatencyMS
@@ -114,7 +119,7 @@ func (c *Controller) Connect(consent bool) {
 	if c.closed {
 		return
 	}
-	if c.state == model.Connecting || c.state == model.Connected || c.disconnecting || c.cleanupFailed || c.connectCancel != nil {
+	if c.state == model.Connecting || c.state == model.Connected || c.disconnecting || c.cleanupFailed || c.connectCancel != nil || c.sessionID != 0 {
 		return
 	}
 	if c.searchID != 0 {
@@ -127,6 +132,7 @@ func (c *Controller) Connect(consent bool) {
 	ctx, cancel := context.WithCancel(c.life)
 	c.connectCancel = cancel
 	c.state = model.Connecting
+	c.recovering = false
 	c.code = ""
 	c.message = ""
 	c.emitState()
@@ -134,7 +140,7 @@ func (c *Controller) Connect(consent bool) {
 }
 
 func (c *Controller) connectCurrent(id uint64) bool {
-	return !c.closed && c.connectID == id && c.state == model.Connecting
+	return !c.closed && !c.cleanupFailed && c.connectID == id && c.state == model.Connecting && !c.recovering
 }
 func (c *Controller) connect(ctx context.Context, id uint64, consent bool) {
 	var instance *backend.Instance
@@ -199,49 +205,33 @@ func (c *Controller) connect(ctx context.Context, id uint64, consent bool) {
 		c.connectFailure(ctx, id, model.E("proxy_exited", "Сетевой компонент завершился во время проверки."))
 		return
 	}
-	result := model.NewResult(instance.Endpoint, latency, model.Primary)
-	warning = c.store.UpdateCache(func(cache model.Cache) model.Cache {
-		cache.LastGood = &result
-		cache.Preferred = nil
-		var keep []model.CheckResult
-		for _, r := range cache.Fallbacks {
-			if r.Endpoint != result.Endpoint && len(keep) < 3 {
-				keep = append(keep, r)
-			}
-		}
-		cache.Fallbacks = keep
-		return cache
-	})
-	c.active = instance
-	c.result = &result
-	c.state = model.Connected
-	c.code = ""
-	c.message = ""
+	c.publishConnection(instance, latency, false)
 	if c.connectCancel != nil {
 		c.connectCancel()
 	}
 	c.connectCancel = nil
 	c.connectID = 0
-	c.emitState()
-	if warning != nil {
-		c.warning(warning)
-	} else {
-		c.emit(model.Event{Type: "saved"})
-	}
 	monitorCtx, cancel := context.WithCancel(c.life)
 	c.healthCancel = cancel
+	c.sessionID = id
+	done := make(chan struct{})
+	c.sessionDone = done
 	owned := instance
 	instance = nil
-	c.spawn(func() { c.monitor(monitorCtx, owned) })
+	prepared := p.Clone()
+	c.spawn(func() { c.monitor(monitorCtx, id, prepared, owned, done) })
 	c.mu.Unlock()
 	if c.options.Log != nil {
-		c.options.Log("connected", result.Endpoint)
+		c.options.Log("connected", owned.Endpoint)
 	}
 }
 
 func (c *Controller) connectFailure(ctx context.Context, id uint64, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.latchCleanup(err) {
+		return
+	}
 	if !c.connectCurrent(id) {
 		return
 	}
@@ -260,14 +250,13 @@ func (c *Controller) connectFailure(ctx context.Context, id uint64, err error) {
 func (c *Controller) Disconnect() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed || c.disconnecting {
+	if c.closed {
 		return
 	}
-	c.disconnecting = true
-	active := c.active
 	c.active = nil
 	c.result = nil
 	c.state = model.Disconnected
+	c.recovering = false
 	c.code = ""
 	c.message = ""
 	if c.connectCancel != nil {
@@ -280,9 +269,19 @@ func (c *Controller) Disconnect() {
 		c.healthCancel()
 	}
 	c.emitState()
+	// Cancellation must happen even during an earlier cleanup/drain. The
+	// monitor is the sole post-verification owner, not this public method.
+	if c.disconnecting {
+		return
+	}
+	c.disconnecting = true
+	sessionDone, searchDone := c.sessionDone, c.searchDone
 	c.spawn(func() {
-		if active != nil {
-			c.stop(active)
+		if sessionDone != nil {
+			<-sessionDone
+		}
+		if searchDone != nil {
+			<-searchDone
 		}
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -297,7 +296,7 @@ func (c *Controller) StartSearch(consent bool) {
 	if c.closed || c.searchID != 0 {
 		return
 	}
-	if c.state == model.Connecting || c.connectCancel != nil || c.disconnecting || c.cleanupFailed {
+	if c.state == model.Connecting || c.connectCancel != nil || c.disconnecting || c.cleanupFailed || c.sessionID != 0 && c.state != model.Connected {
 		c.emit(model.Event{Type: "error", Code: "busy", Message: "Дождитесь завершения подключения или очистки."})
 		return
 	}
@@ -311,8 +310,21 @@ func (c *Controller) StartSearch(consent bool) {
 	c.searchRole = role
 	ctx, cancel := context.WithCancel(c.life)
 	c.searchCancel = cancel
+	done := make(chan struct{})
+	c.searchDone = done
 	c.emit(model.Event{Type: "search_started", Role: role})
-	c.spawn(func() { c.search(ctx, id, role, consent) })
+	c.spawn(func() {
+		defer func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.endSearch(id)
+			if c.searchDone == done {
+				c.searchDone = nil
+			}
+			close(done)
+		}()
+		c.search(ctx, id, role, consent)
+	})
 }
 func (c *Controller) CancelSearch() {
 	c.mu.Lock()
@@ -321,7 +333,9 @@ func (c *Controller) CancelSearch() {
 		c.searchCancel()
 	}
 }
-func (c *Controller) searchCurrent(id uint64) bool { return !c.closed && c.searchID == id }
+func (c *Controller) searchCurrent(id uint64) bool {
+	return !c.closed && !c.cleanupFailed && c.searchID == id
+}
 func (c *Controller) endSearch(id uint64) {
 	if c.searchID == id {
 		if c.searchCancel != nil {
@@ -372,7 +386,9 @@ func (c *Controller) search(ctx context.Context, id uint64, role string, consent
 	// can overwrite preferred after CancelSearch, Disconnect or Close returns.
 	if !c.searchCurrent(id) || ctx.Err() != nil || outcome.Cancelled {
 		c.endSearch(id)
-		c.emit(model.Event{Type: "search_cancelled"})
+		if !c.closed && !c.recovering {
+			c.emit(model.Event{Type: "search_cancelled"})
+		}
 		return
 	}
 	if len(outcome.Results) == 0 {
@@ -403,84 +419,33 @@ func (c *Controller) search(ctx context.Context, id uint64, role string, consent
 func (c *Controller) searchFailure(ctx context.Context, id uint64, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.latchCleanup(err) {
+		c.endSearch(id)
+		return
+	}
 	if ctx.Err() != nil || !c.searchCurrent(id) {
 		c.endSearch(id)
-		c.emit(model.Event{Type: "search_cancelled"})
+		if !c.closed && !c.recovering {
+			c.emit(model.Event{Type: "search_cancelled"})
+		}
 		return
 	}
 	c.endSearch(id)
 	c.emit(model.Event{Type: "search_done", Found: model.Count(0), Code: model.Code(err), Message: model.SafeMessage(err)})
 }
 
-func (c *Controller) monitor(ctx context.Context, instance *backend.Instance) {
-	failures := 0
-	timer := time.NewTimer(c.options.HealthInterval)
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-timer.C:
-		}
-		c.mu.Lock()
-		current := !c.closed && c.active == instance && c.state == model.Connected
-		c.mu.Unlock()
-		if !current {
-			return
-		}
-		if !c.finder.Alive(instance) {
-			c.monitorFailure(ctx, instance, "proxy_exited", "Сетевой компонент неожиданно завершился.")
-			return
-		}
-		_, err := c.health(ctx, instance.Port)
-		if ctx.Err() != nil {
-			return
-		}
-		if err != nil {
-			failures++
-		} else {
-			failures = 0
-		}
-		if failures >= c.options.HealthFailures {
-			c.monitorFailure(ctx, instance, "connection_lost", "Соединение WARP перестало отвечать; прокси остановлен.")
-			return
-		}
-		timer.Reset(c.options.HealthInterval)
-	}
-}
-func (c *Controller) monitorFailure(ctx context.Context, instance *backend.Instance, code, message string) {
-	c.mu.Lock()
-	if c.closed || ctx.Err() != nil || c.active != instance {
-		c.mu.Unlock()
-		return
-	}
-	c.active = nil
-	c.result = nil
-	c.disconnecting = true
-	c.state = model.Failed
-	c.code = code
-	c.message = message
-	if c.healthCancel != nil {
-		c.healthCancel()
-	}
-	c.mu.Unlock()
-	c.stop(instance)
-	c.mu.Lock()
-	c.disconnecting = false
-	c.emitState()
-	c.mu.Unlock()
-}
-func (c *Controller) stop(instance *backend.Instance) {
+func (c *Controller) stop(instance *backend.Instance) error {
 	if err := c.backend.Stop(instance); err != nil {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		c.cleanupFailed = true
-		c.state = model.Failed
-		c.code = model.Code(err)
-		c.message = model.SafeMessage(err)
-		c.warning(err)
-		c.emitState()
+		// A Stop error is unsafe irrespective of its backend representation.
+		if !c.latchCleanup(err) {
+			err = model.E("proxy_cleanup_failed", "Не удалось подтвердить остановку сетевого процесса.")
+			c.latchCleanup(err)
+		}
+		return err
 	}
+	return nil
 }
 
 // Close is synchronous and idempotent, including concurrent calls. The UI calls
@@ -499,22 +464,24 @@ func (c *Controller) Close() {
 		if c.healthCancel != nil {
 			c.healthCancel()
 		}
-		active := c.active
 		c.active = nil
 		c.result = nil
 		c.state = model.Disconnected
+		c.recovering = false
 		c.mu.Unlock()
-		if active != nil {
-			c.stop(active)
-		}
 		managerErr := c.manager.Shutdown()
 		c.wg.Wait()
-		runtimeErr := c.store.ClearRuntime()
+		var runtimeErr error
+		if managerErr == nil {
+			runtimeErr = c.store.ClearRuntime()
+		}
 		c.mu.Lock()
 		if managerErr != nil {
 			c.closeErr = managerErr
-		} else {
+		} else if runtimeErr != nil {
 			c.closeErr = runtimeErr
+		} else {
+			c.closeErr = c.cleanupErr
 		}
 		c.mu.Unlock()
 		close(c.closeDone)

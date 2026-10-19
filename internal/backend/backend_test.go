@@ -202,73 +202,76 @@ func runtimeConfigs(t *testing.T, paths storage.Paths) []string {
 }
 
 func TestRuntimeDNSAndSameEXEArgumentsPreserveProfileAndIdentity(t *testing.T) {
-	for _, role := range []string{model.Primary, model.Probe} {
-		t.Run(role, func(t *testing.T) {
-			backend, paths, _ := testBackend(t, testWorkerControl{})
-			original := syntheticProfile()
-			before := original.Clone()
-			identity, _ := original.Identity()
-			saved, err := profile.Render(original, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			persisted, imported := filepath.Join(paths.Root, "profile.conf"), filepath.Join(paths.Root, "import.conf")
-			for _, path := range []string{persisted, imported} {
-				if storage.AtomicWrite(path, []byte(saved)) != nil {
-					t.Fatal("cannot write synthetic profile fixture")
+	for _, keepalive := range []int{0, 17, 25} {
+		for _, role := range []string{model.Primary, model.Probe} {
+			t.Run(fmt.Sprintf("%s/keepalive=%d", role, keepalive), func(t *testing.T) {
+				backend, paths, _ := testBackend(t, testWorkerControl{})
+				original := syntheticProfile()
+				original.Keepalive = keepalive
+				before := original.Clone()
+				identity, _ := original.Identity()
+				saved, err := profile.Render(original, nil)
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			endpoint := model.Endpoint{Host: "127.0.0.1", Port: 10}
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			instance, err := backend.Start(ctx, original, endpoint, role, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = backend.Stop(instance) })
-			config, err := os.ReadFile(instance.Config)
-			if err != nil {
-				t.Fatal("private runtime configuration missing")
-			}
-			expected := before.Clone()
-			expected.DNS = []string{"83.220.169.155", "212.109.195.93", "194.87.196.13", "45.151.102.219", "9.9.9.9"}
-			rendered, err := profile.Render(expected, &endpoint)
-			if err != nil || string(config) != fmt.Sprintf("%s\n[Socks5]\nBindAddress = 127.0.0.1:%d\n\n[Resolve]\nResolveStrategy = ipv4\n", rendered, instance.Port) {
-				t.Fatal("runtime config changed fields other than endpoint/DNS and loopback SOCKS sections")
-			}
-			afterIdentity, _ := original.Identity()
-			if !reflect.DeepEqual(original, before) || identity != afterIdentity {
-				t.Fatal("runtime override mutated the source profile or identity")
-			}
-			for _, path := range []string{persisted, imported} {
-				data, err := os.ReadFile(path)
-				if err != nil || string(data) != saved {
-					t.Fatal("runtime start modified a saved/imported profile")
+				persisted, imported := filepath.Join(paths.Root, "profile.conf"), filepath.Join(paths.Root, "import.conf")
+				for _, path := range []string{persisted, imported} {
+					if storage.AtomicWrite(path, []byte(saved)) != nil {
+						t.Fatal("cannot write synthetic profile fixture")
+					}
 				}
-			}
-			launch := waitLaunch(t, paths, 1)
-			if !reflect.DeepEqual(launch.Args, []string{backend.executable, "--engine", "--role", role, "--config", instance.Config}) || instance.PID() != launch.PID || instance.Endpoint != endpoint || instance.Role != role {
-				t.Fatal("self-worker arguments or instance metadata are incorrect")
-			}
-			if strings.Contains(strings.Join(launch.Args, " "), original.PrivateKey) || strings.Contains(strings.Join(launch.Args, " "), original.PresharedKey) {
-				t.Fatal("secret key reached process arguments")
-			}
-			if runtime.GOOS != "windows" {
-				file, _ := os.Stat(instance.Config)
-				directory, _ := os.Stat(paths.Run())
-				if file.Mode().Perm() != 0600 || directory.Mode().Perm() != 0700 {
-					t.Fatal("runtime configuration is not private")
+				endpoint := model.Endpoint{Host: "127.0.0.1", Port: 10}
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				instance, err := backend.Start(ctx, original, endpoint, role, 0)
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			cancel()
-			time.Sleep(50 * time.Millisecond)
-			if !instance.Process.Alive() {
-				t.Fatal("successful backend worker retained the launch context")
-			}
-			if backend.Stop(instance) != nil || backend.Stop(instance) != nil || len(runtimeConfigs(t, paths)) != 0 {
-				t.Fatal("idempotent stop did not clean up the owned config")
-			}
-		})
+				t.Cleanup(func() { _ = backend.Stop(instance) })
+				config, err := os.ReadFile(instance.Config)
+				if err != nil {
+					t.Fatal("private runtime configuration missing")
+				}
+				expected := before.Clone()
+				expected.DNS = []string{"83.220.169.155", "212.109.195.93", "194.87.196.13", "45.151.102.219", "9.9.9.9"}
+				rendered, err := profile.Render(expected, &endpoint)
+				if err != nil || string(config) != fmt.Sprintf("%s\n[Socks5]\nBindAddress = 127.0.0.1:%d\n\n[Resolve]\nResolveStrategy = ipv4\n", rendered, instance.Port) {
+					t.Fatal("runtime config changed fields other than endpoint/DNS and loopback SOCKS sections")
+				}
+				afterIdentity, _ := original.Identity()
+				if !reflect.DeepEqual(original, before) || identity != afterIdentity {
+					t.Fatal("runtime override mutated the source profile or identity")
+				}
+				for _, path := range []string{persisted, imported} {
+					data, err := os.ReadFile(path)
+					if err != nil || string(data) != saved {
+						t.Fatal("runtime start modified a saved/imported profile")
+					}
+				}
+				launch := waitLaunch(t, paths, 1)
+				if !reflect.DeepEqual(launch.Args, []string{backend.executable, "--engine", "--role", role, "--config", instance.Config}) || instance.PID() != launch.PID || instance.Endpoint != endpoint || instance.Role != role {
+					t.Fatal("self-worker arguments or instance metadata are incorrect")
+				}
+				if strings.Contains(strings.Join(launch.Args, " "), original.PrivateKey) || strings.Contains(strings.Join(launch.Args, " "), original.PresharedKey) {
+					t.Fatal("secret key reached process arguments")
+				}
+				if runtime.GOOS != "windows" {
+					file, _ := os.Stat(instance.Config)
+					directory, _ := os.Stat(paths.Run())
+					if file.Mode().Perm() != 0600 || directory.Mode().Perm() != 0700 {
+						t.Fatal("runtime configuration is not private")
+					}
+				}
+				cancel()
+				time.Sleep(50 * time.Millisecond)
+				if !instance.Process.Alive() {
+					t.Fatal("successful backend worker retained the launch context")
+				}
+				if backend.Stop(instance) != nil || backend.Stop(instance) != nil || len(runtimeConfigs(t, paths)) != 0 {
+					t.Fatal("idempotent stop did not clean up the owned config")
+				}
+			})
+		}
 	}
 }
 
@@ -481,12 +484,102 @@ func TestLaunchAndPrivateConfigFailuresAreApplicationSafe(t *testing.T) {
 	backend, paths, _ := testBackend(t, testWorkerControl{})
 	secret := "synthetic-private-config-secret"
 	backend.executable = filepath.Join(paths.Root, secret+".exe")
-	if _, err := backend.Start(context.Background(), syntheticProfile(), syntheticProfile().Endpoint, model.Probe, 0); err == nil || strings.Contains(fmt.Sprintf("%+v", err), secret) || len(runtimeConfigs(t, paths)) != 0 {
+	if _, err := backend.Start(context.Background(), syntheticProfile(), syntheticProfile().Endpoint, model.Probe, 0); model.Code(err) != "proxy_launch_failed" || strings.Contains(fmt.Sprintf("%+v", err), secret) || len(runtimeConfigs(t, paths)) != 0 {
 		t.Fatal("failed launch exposed inputs or left a private config")
 	}
 	invalid := syntheticProfile()
 	invalid.PrivateKey = secret
-	if _, err := backend.Start(context.Background(), invalid, invalid.Endpoint, model.Probe, 0); err == nil || strings.Contains(fmt.Sprintf("%+v", err), secret) || len(runtimeConfigs(t, paths)) != 0 {
+	if _, err := backend.Start(context.Background(), invalid, invalid.Endpoint, model.Probe, 0); model.Code(err) != "proxy_config_failed" || strings.Contains(fmt.Sprintf("%+v", err), secret) || len(runtimeConfigs(t, paths)) != 0 {
 		t.Fatal("invalid profile exposed private input or created a config")
+	}
+	backend.executable = "relative-engine"
+	if _, err := backend.Start(context.Background(), syntheticProfile(), syntheticProfile().Endpoint, model.Probe, 0); model.Code(err) != "proxy_launch_failed" || len(runtimeConfigs(t, paths)) != 0 {
+		t.Fatal("local executable preparation failure was classified as a candidate failure")
+	}
+}
+
+// Like Manager.Start's failed cancellation rollback, this manager retains the
+// real worker but returns nil/ErrStop. Backend must not treat Stop(nil) as proof
+// that the retained tree was stopped, even when the launch context also ended.
+type retainedLaunchManager struct {
+	manager *process.Manager
+	after   func()
+	process *process.Process
+}
+
+func (m *retainedLaunchManager) Start(_ context.Context, args []string, cwd string) (*process.Process, error) {
+	var err error
+	m.process, err = m.manager.Start(context.Background(), args, cwd)
+	if err != nil {
+		return nil, err
+	}
+	m.after()
+	return nil, process.ErrStop
+}
+
+func (m *retainedLaunchManager) Stop(p *process.Process) error { return m.manager.Stop(p) }
+
+func TestManagerRetainedLaunchCleanupFailureOutranksCancellationAndDeadline(t *testing.T) {
+	for _, deadline := range []bool{false, true} {
+		t.Run(strconv.FormatBool(deadline), func(t *testing.T) {
+			backend, paths, manager := testBackend(t, testWorkerControl{})
+			ctx, cancel := context.WithCancel(context.Background())
+			if deadline {
+				cancel()
+				ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+			}
+			defer cancel()
+			injected := &retainedLaunchManager{manager: manager, after: func() {
+				waitLaunch(t, paths, 1)
+				if !deadline {
+					cancel()
+				}
+				<-ctx.Done()
+			}}
+			backend.manager = injected
+			instance, err := backend.Start(ctx, syntheticProfile(), syntheticProfile().Endpoint, model.Probe, 0)
+			if instance != nil || model.Code(err) != "proxy_cleanup_failed" || ctx.Err() == nil {
+				t.Fatal("manager's retained rollback failure was hidden by the ended launch context")
+			}
+			if injected.process == nil || !injected.process.Alive() || len(runtimeConfigs(t, paths)) != 0 {
+				t.Fatal("fixture did not retain a real owned worker or failed to remove its config")
+			}
+			if err := manager.Stop(injected.process); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+type stopFailureManager struct {
+	calls int
+	err   error
+}
+
+func (*stopFailureManager) Start(context.Context, []string, string) (*process.Process, error) {
+	return nil, process.ErrStart
+}
+
+func (m *stopFailureManager) Stop(*process.Process) error {
+	m.calls++
+	return m.err
+}
+
+func TestStopChecksCleanupEvenWhenProcessIsNotAliveAndRetriesFailure(t *testing.T) {
+	backend, paths, _ := testBackend(t, testWorkerControl{})
+	manager := &stopFailureManager{err: process.ErrStop}
+	backend.manager = manager
+	config := filepath.Join(paths.Run(), "synthetic-owned.conf")
+	if err := storage.AtomicWrite(config, []byte("synthetic")); err != nil {
+		t.Fatal(err)
+	}
+	proc := &process.Process{} // Alive=false is not a checked Stop result.
+	instance := &Instance{Process: proc, owner: backend, ownedProcess: proc, ownedConfig: config}
+	if proc.Alive() || model.Code(backend.Stop(instance)) != "proxy_cleanup_failed" || manager.calls != 1 {
+		t.Fatal("dead-process metadata bypassed checked cleanup")
+	}
+	manager.err = nil
+	if backend.Stop(instance) != nil || manager.calls != 2 || backend.Stop(instance) != nil || manager.calls != 2 {
+		t.Fatal("failed cleanup was forgotten or successful cleanup was not idempotent")
 	}
 }

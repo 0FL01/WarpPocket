@@ -17,10 +17,16 @@ type Snapshot struct {
 	LatencyMS       float64
 	Searching, Busy bool
 	SearchRole      string
+
+	// Recovering is an established session being restored, not a fifth State.
+	// It implies Connecting and Busy, with no endpoint, latency or error outcome.
+	Recovering bool
 }
 
 // Event fields are typed; nil Found means that a progress event did not update
 // the success count, rather than resetting it to zero.
+// State event codes recovery_started/recovered identify transitions only; they
+// are not persistent Snapshot.Code error outcomes.
 type Event struct {
 	State                            State
 	Type, Stage, Role, Code, Message string

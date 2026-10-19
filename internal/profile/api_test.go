@@ -126,7 +126,7 @@ func TestNativeAPIAndroidRequestsPerAccountAuthAndNormalizedGeneration(t *testin
 		t.Fatal("registration public key does not match persisted private key")
 	}
 	profile, err := client.Generate(context.Background(), account)
-	if err != nil || profile.PrivateKey != account.PrivateKey || profile.Reserved == nil || *profile.Reserved != [3]byte{10, 11, 12} || profile.Endpoint.String() != "engage.cloudflareclient.com:2408" || profile.Keepalive != 0 || profile.MTU != 1280 || len(profile.DNS) != 4 || !reflect.DeepEqual(profile.Addresses, []string{"172.16.0.2/32", "2606:4700:110::1/128"}) {
+	if err != nil || profile.PrivateKey != account.PrivateKey || profile.Reserved == nil || *profile.Reserved != [3]byte{10, 11, 12} || profile.Endpoint.String() != "engage.cloudflareclient.com:2408" || profile.Keepalive != 25 || profile.MTU != 1280 || len(profile.DNS) != 4 || !reflect.DeepEqual(profile.Addresses, []string{"172.16.0.2/32", "2606:4700:110::1/128"}) {
 		t.Fatalf("native generated profile differs: %s", model.Code(err))
 	}
 	second := account
@@ -192,6 +192,25 @@ func TestNativeAPIEndpointAddressAndPeerExtraction(t *testing.T) {
 				t.Fatal("malformed API configuration was not rejected safely")
 			}
 		})
+	}
+}
+
+func TestNativeAPIGenerationDefaultsNewProfileKeepaliveTo25(t *testing.T) {
+	var gets atomic.Int32
+	client, _ := tlsClient(t, func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			t.Error("new-profile fixture unexpectedly registered or patched an account")
+		}
+		gets.Add(1)
+		writeJSON(t, writer, apiFixture("BwgJ", true))
+	})
+	p, err := client.Generate(context.Background(), fixtureAccount(0))
+	if err != nil || p.Keepalive != 25 || gets.Load() != 1 {
+		t.Fatal("native generation did not apply the new-profile-only keepalive default")
+	}
+	text, err := Render(p, nil)
+	if err != nil || !strings.Contains(text, "\nPersistentKeepalive = 25\n") || mustParse(t, text).Keepalive != 25 {
+		t.Fatal("new profile's keepalive was not preserved through render/parse")
 	}
 }
 

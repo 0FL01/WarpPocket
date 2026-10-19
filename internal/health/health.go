@@ -57,13 +57,16 @@ func (c *deadlineConn) Close() error {
 
 func transport(port int, roots *x509.CertPool) (*http.Transport, error) {
 	if port < 1 || port > 65535 || roots == nil {
-		return nil, model.E("health_failed", "Некорректные параметры проверки SOCKS5.")
+		return nil, model.E("health_setup_failed", "Некорректные параметры проверки SOCKS5.")
 	}
 	dialer, err := proxy.SOCKS5("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), nil, &net.Dialer{Timeout: ConnectTimeout})
 	if err != nil {
-		return nil, model.E("health_failed", "Не удалось подготовить проверку SOCKS5.")
+		return nil, model.E("health_setup_failed", "Не удалось подготовить проверку SOCKS5.")
 	}
-	remote := dialer.(proxy.ContextDialer)
+	remote, ok := dialer.(proxy.ContextDialer)
+	if !ok {
+		return nil, model.E("health_setup_failed", "Не удалось подготовить проверку SOCKS5.")
+	}
 	return &http.Transport{
 		// Proxy is deliberately nil, never ProxyFromEnvironment.
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -86,9 +89,13 @@ func transport(port int, roots *x509.CertPool) (*http.Transport, error) {
 }
 
 func Check(ctx context.Context, port int) (float64, error) {
-	roots, err := trust.Pool()
+	return checkProxy(ctx, port, trust.Pool)
+}
+
+func checkProxy(ctx context.Context, port int, loadRoots func() (*x509.CertPool, error)) (float64, error) {
+	roots, err := loadRoots()
 	if err != nil {
-		return 0, model.E("health_tls", "Встроенные TLS-сертификаты недоступны.")
+		return 0, model.E("health_setup_failed", "Встроенные TLS-сертификаты недоступны.")
 	}
 	t, err := transport(port, roots)
 	if err != nil {
@@ -109,7 +116,7 @@ func check(ctx context.Context, client *http.Client, urls [3]string, budget time
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil || req.URL.Scheme != "https" {
-			return 0, nil, model.E("health_failed", "Проверка требует HTTPS через SOCKS5.")
+			return 0, nil, model.E("health_setup_failed", "Проверка требует HTTPS через SOCKS5.")
 		}
 		response, err := client.Do(req)
 		if err != nil {
@@ -140,7 +147,7 @@ func check(ctx context.Context, client *http.Client, urls [3]string, budget time
 	for n, url := range urls[1:] {
 		status, body, err = request(url)
 		if err != nil {
-			if ctx.Err() != nil || model.Code(err) == "health_response_large" {
+			if ctx.Err() != nil || model.Code(err) == "health_response_large" || model.Code(err) == "health_setup_failed" || model.Code(err) == "health_tls" {
 				return 0, err
 			}
 			continue

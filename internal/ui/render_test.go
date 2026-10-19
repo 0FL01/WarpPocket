@@ -22,15 +22,19 @@ import (
 // render is a failure, not a skip or a replacement by a browser mock.
 func TestRenderedCrayonStatesAndDPI(t *testing.T) {
 	for _, scale := range []float32{1, 1.25, 1.5} {
-		for _, state := range []string{"disconnected", "connecting", "connected", "searching", "error", "menu", "consent"} {
+		for _, state := range []string{"disconnected", "connecting", "connecting-recovery", "connected", "searching", "error", "menu", "consent"} {
 			t.Run(fmt.Sprintf("%s-%g", state, scale), func(t *testing.T) {
-				c := &testController{state: model.Snapshot{State: model.State(state)}}
-				if state == "searching" {
+				c := &testController{state: model.Snapshot{State: model.Disconnected}}
+				switch state {
+				case "connecting":
+					c.state.State = model.Connecting
+				case "connecting-recovery":
+					c.state = recoveringSnapshot(true)
+				case "connected", "searching":
 					c.state.State = model.Connected
-					c.state.Searching = true
-				}
-				if state == "menu" || state == "consent" {
-					c.state.State = model.Disconnected
+					c.state.Searching = state == "searching"
+				case "error":
+					c.state.State = model.Failed
 				}
 				if c.state.State == model.Connected {
 					c.state.Endpoint = model.Endpoint{Host: "188.114.97.1", Port: 4500}
@@ -42,6 +46,7 @@ func TestRenderedCrayonStatesAndDPI(t *testing.T) {
 				v := NewView(c, nil, "Лицензии")
 				v.Update()
 				v.completed, v.limit, v.found = 12, 30, 1
+				v.progressEndpoint = "188.114.97.1:4500"
 				v.menuOpen = state == "menu"
 				if state == "consent" {
 					v.consent = model.Primary
@@ -53,7 +58,7 @@ func TestRenderedCrayonStatesAndDPI(t *testing.T) {
 				}
 				defer w.Release()
 				var ops op.Ops
-				gtx := layout.Context{Ops: &ops, Metric: unit.Metric{PxPerDp: scale, PxPerSp: scale}, Constraints: layout.Exact(size), Now: time.Unix(100, 0)}
+				gtx := layout.Context{Ops: &ops, Metric: unit.Metric{PxPerDp: scale, PxPerSp: scale}, Constraints: layout.Exact(size), Now: time.Unix(100, 750_000_000)}
 				v.Layout(gtx)
 				if err := w.Frame(&ops); err != nil {
 					t.Fatal(err)

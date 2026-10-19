@@ -27,9 +27,14 @@ const SOCKSPort = 25344
 
 var runtimeDNS = [...]string{"83.220.169.155", "212.109.195.93", "194.87.196.13", "45.151.102.219", "9.9.9.9"}
 
+type processManager interface {
+	Start(context.Context, []string, string) (*process.Process, error)
+	Stop(*process.Process) error
+}
+
 type Backend struct {
 	paths      storage.Paths
-	manager    *process.Manager
+	manager    processManager
 	executable string
 }
 
@@ -40,7 +45,11 @@ func New(paths storage.Paths, manager *process.Manager, executable string) *Back
 	if executable == "" {
 		executable, _ = os.Executable()
 	}
-	return &Backend{paths: paths, manager: manager, executable: executable}
+	b := &Backend{paths: paths, executable: executable}
+	if manager != nil {
+		b.manager = manager
+	}
+	return b
 }
 
 type Instance struct {
@@ -81,7 +90,7 @@ func (b *Backend) Start(ctx context.Context, p model.Profile, endpoint model.End
 		return nil, contextError(err)
 	}
 	if !filepath.IsAbs(b.executable) || strings.TrimSpace(b.paths.Root) == "" {
-		return nil, model.E("proxy_start_failed", "Не удалось подготовить сетевой компонент.")
+		return nil, model.E("proxy_launch_failed", "Не удалось подготовить сетевой компонент.")
 	}
 	run, err := filepath.Abs(b.paths.Run())
 	if err != nil || storage.PrivateDirectory(b.paths.Root) != nil || storage.PrivateDirectory(run) != nil {
@@ -117,14 +126,17 @@ func (b *Backend) Start(ctx context.Context, p model.Profile, endpoint model.End
 func (b *Backend) startAttempt(ctx context.Context, run, rendered string, endpoint model.Endpoint, role string, port int) (*Instance, error, bool) {
 	reservation, err := (&net.ListenConfig{Control: reservationControl}).Listen(ctx, "tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, contextError(ctx.Err()), false
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, contextError(err), false
+		}
+		if port == 0 {
+			return nil, model.E("proxy_port_failed", "Не удалось подготовить порт SOCKS5."), false
 		}
 		return nil, model.E("port_busy", "Порт SOCKS5 занят другим приложением; чужой процесс не будет завершён."), false
 	}
 	chosenPort := reservation.Addr().(*net.TCPAddr).Port
 	if reservation.Close() != nil {
-		return nil, model.E("proxy_start_failed", "Не удалось подготовить порт SOCKS5."), false
+		return nil, model.E("proxy_port_failed", "Не удалось подготовить порт SOCKS5."), false
 	}
 	var id [16]byte
 	if _, err := rand.Read(id[:]); err != nil {
@@ -143,16 +155,21 @@ func (b *Backend) startAttempt(ctx context.Context, run, rendered string, endpoi
 		return nil, model.E("proxy_config_failed", "Не удалось записать личный файл сетевого компонента."), false
 	}
 	proc, err := b.manager.Start(ctx, []string{b.executable, "--engine", "--role", role, "--config", config}, run)
-	if err != nil {
+	instance.Process, instance.ownedProcess = proc, proc
+	if err != nil || proc == nil {
 		if cleanupErr := b.Stop(instance); cleanupErr != nil {
 			return nil, cleanupErr, false
+		}
+		// Manager may retain a newly created tree after failed rollback while
+		// returning no Process. Stop(nil) cannot prove that tree was cleaned up.
+		if errors.Is(err, process.ErrStop) {
+			return nil, cleanupError(), false
 		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, contextError(err), false
 		}
-		return nil, model.E("proxy_start_failed", "Не удалось запустить сетевой компонент."), false
+		return nil, model.E("proxy_launch_failed", "Не удалось запустить сетевой компонент."), false
 	}
-	instance.Process, instance.ownedProcess = proc, proc
 	if err := awaitSOCKS(ctx, instance); err != nil {
 		retry := model.Code(err) == "proxy_start_failed"
 		if cleanupErr := b.Stop(instance); cleanupErr != nil {
@@ -243,9 +260,13 @@ func (b *Backend) Stop(instance *Instance) error {
 		}
 	}
 	if failed {
-		return model.E("proxy_cleanup_failed", "Не удалось полностью освободить сетевой компонент.")
+		return cleanupError()
 	}
 	return nil
+}
+
+func cleanupError() error {
+	return model.E("proxy_cleanup_failed", "Не удалось полностью освободить сетевой компонент.")
 }
 
 func contextError(err error) error {

@@ -3,6 +3,7 @@ package health
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"io"
@@ -212,5 +213,56 @@ func TestNoDirectFallback(t *testing.T) {
 	pool, err := trust.Pool()
 	if err != nil || len(pool.Subjects()) < 50 {
 		t.Fatal("embedded certificates unavailable")
+	}
+}
+
+func TestLocalRootTransportAndRequestSetupHaveDistinctTerminalCode(t *testing.T) {
+	_, err := checkProxy(context.Background(), 25344, func() (*x509.CertPool, error) {
+		return nil, errors.New("synthetic private setup details")
+	})
+	if model.Code(err) != "health_setup_failed" || strings.Contains(err.Error(), "synthetic") {
+		t.Fatal("embedded root setup was confused with remote TLS verification or exposed inputs")
+	}
+	for _, port := range []int{0, 65536} {
+		if _, err := Check(context.Background(), port); model.Code(err) != "health_setup_failed" {
+			t.Fatal("invalid local SOCKS transport was classified as remote failure")
+		}
+	}
+	if _, err := transport(25344, nil); model.Code(err) != "health_setup_failed" {
+		t.Fatal("missing local root pool was classified as remote failure")
+	}
+	client := &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) {
+		t.Error("invalid local request setup reached the network")
+		return nil, errors.New("unexpected request")
+	})}
+	if _, err := check(context.Background(), client, [3]string{"http://example.com/trace", IndependentURL, FallbackURL}, time.Second); model.Code(err) != "health_setup_failed" {
+		t.Fatal("invalid local health URL was not terminal setup failure")
+	}
+}
+
+func TestRemoteTLSFailureIsVerificationFailureWithoutResourceFallback(t *testing.T) {
+	for _, failedURL := range []string{TraceURL, IndependentURL} {
+		for _, remoteErr := range []error{&tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}, tls.RecordHeaderError{}} {
+			calls := 0
+			client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if r.URL.String() == failedURL {
+					return nil, remoteErr
+				}
+				if r.URL.String() == TraceURL {
+					return response(http.StatusOK, "warp=on\n"), nil
+				}
+				t.Error("TLS failure attempted another resource")
+				return response(http.StatusNoContent, ""), nil
+			})}
+			_, err := check(context.Background(), client, [3]string{TraceURL, IndependentURL, FallbackURL}, time.Second)
+			wantCalls := 1
+			if failedURL == IndependentURL {
+				wantCalls = 2
+			}
+			if model.Code(err) != "health_tls" || calls != wantCalls {
+				t.Fatal("remote TLS rejection was treated as local setup or allowed fallback")
+			}
+		}
 	}
 }

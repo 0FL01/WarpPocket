@@ -6,8 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/io/input"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -15,13 +17,23 @@ import (
 )
 
 type testController struct {
-	state  model.Snapshot
-	events []model.Event
-	calls  []string
+	state     model.Snapshot
+	events    []model.Event
+	calls     []string
+	afterPoll func()
 }
 
-func (c *testController) Status() model.Snapshot    { return c.state }
-func (c *testController) PollEvents() []model.Event { e := c.events; c.events = nil; return e }
+func (c *testController) Status() model.Snapshot { return c.state }
+func (c *testController) PollEvents() []model.Event {
+	e := c.events
+	c.events = nil
+	if c.afterPoll != nil {
+		hook := c.afterPoll
+		c.afterPoll = nil
+		hook()
+	}
+	return e
+}
 func (c *testController) Connect(consent bool) {
 	if consent {
 		c.calls = append(c.calls, "connect consent")
@@ -57,6 +69,53 @@ func (f *uiFrame) layout() layout.Dimensions {
 	dims := f.view.Layout(gtx)
 	f.router.Frame(&f.ops)
 	return dims
+}
+
+func (f *uiFrame) keyboardClick(tag any, name key.Name) {
+	f.router.Source().Execute(key.FocusCmd{Tag: tag})
+	f.layout()
+	f.router.Queue(key.Event{Name: name, State: key.Press}, key.Event{Name: name, State: key.Release})
+	f.layout()
+}
+
+func (f *uiFrame) semantic(t *testing.T, label string) input.SemanticDesc {
+	t.Helper()
+	// Text can have a larger semantic clip than its clickable parent; honor
+	// ancestor bounds and disabled state when exercising native hit areas.
+	var find func([]input.SemanticNode, bool, image.Rectangle) (input.SemanticDesc, bool)
+	find = func(nodes []input.SemanticNode, disabled bool, bounds image.Rectangle) (input.SemanticDesc, bool) {
+		for _, node := range nodes {
+			desc := node.Desc
+			desc.Disabled = disabled || desc.Disabled
+			desc.Bounds = desc.Bounds.Intersect(bounds)
+			if node.Desc.Label == label {
+				return desc, true
+			}
+			if desc, ok := find(node.Children, desc.Disabled, desc.Bounds); ok {
+				return desc, true
+			}
+		}
+		return input.SemanticDesc{}, false
+	}
+	if desc, ok := find(f.router.AppendSemantics(nil), false, image.Rect(0, 0, 442, 760)); ok {
+		return desc
+	}
+	t.Fatalf("missing native semantic label %q", label)
+	return input.SemanticDesc{}
+}
+
+func (f *uiFrame) pointerClick(t *testing.T, label string) {
+	t.Helper()
+	bounds := f.semantic(t, label).Bounds
+	if bounds.Empty() {
+		t.Fatalf("no native hit area for %q", label)
+	}
+	pos := f32.Pt(float32(bounds.Min.X+bounds.Dx()/2), float32(bounds.Min.Y+bounds.Dy()/2))
+	f.router.Queue(
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pos},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pos},
+	)
+	f.layout()
 }
 
 func TestStateActionsAndRoutingHint(t *testing.T) {
@@ -196,8 +255,8 @@ func TestMenuImportAndSavedMessages(t *testing.T) {
 	f.layout()
 	f.view.items[0].Click()
 	f.layout()
-	if f.view.importRequest != "" || f.view.info == "" {
-		t.Fatal("import allowed while active")
+	if f.view.importRequest != "" || f.view.info != "" {
+		t.Fatal("disabled import created a request or a modal")
 	}
 	f.view.info = ""
 	c.state.State = model.Disconnected
@@ -252,8 +311,12 @@ func TestNativeKeyboardAndModalEscape(t *testing.T) {
 
 func TestLongMessagesAndDPILayout(t *testing.T) {
 	for _, scale := range []float32{1, 1.25, 1.5} {
-		for _, state := range []model.State{model.Disconnected, model.Connecting, model.Connected, model.Failed} {
-			c := &testController{state: model.Snapshot{State: state, Message: strings.Repeat("Подробная безопасная ошибка без секретов. ", 20)}}
+		for _, snapshot := range []model.Snapshot{
+			{State: model.Disconnected}, {State: model.Connecting}, {State: model.Connected}, {State: model.Failed},
+			{State: model.Connecting, Recovering: true, Busy: true, Searching: true},
+		} {
+			snapshot.Message = strings.Repeat("Подробная безопасная ошибка без секретов. ", 20)
+			c := &testController{state: snapshot}
 			v := NewView(c, nil, "Лицензии")
 			v.Update()
 			v.notice = c.state.Message
