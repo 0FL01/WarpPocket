@@ -1,6 +1,6 @@
 # Goal: Go-only WarpPocket with the Crayon Gio interface
 
-Status: active
+Status: complete
 Source: approved Go/Gio migration plan; user «Делай копию плана в цель, выкидываем полность Python из бекенда/гуя, оставляем python только для тестов, но основнйо стек будет на Golang; breaking changes approved».
 Last updated: 2026-10-19
 
@@ -41,8 +41,8 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
   - Source: approved migration plan stages 7–8; user requires Go stack, one lighter binary and existing automatic releases.
   - Acceptance: no runtime Python or Python build/release invocation; Linux/Windows Go CI, native policy and packaged same-EXE smoke pass. Master-only success-gated serialized rolling publication preserves stale-build/draft safeguards and attaches only matching WarpPocket.exe. Record actual EXE size/startup/all-process working-set comparison with the prior 29,484,399-byte build; do not invent a size or GPU compatibility claim. README describes new Go commands/limits.
   - Primary evidence: workflow and tool tests; downloaded release compared with the same-run tested artifact; measured baseline/new footprint; source/dependency inspection.
-  - Status: in_progress
-  - Evidence: Go-only source/preparation/build/smoke/publisher tests and native Linux/Windows core/vet pass. Run 39296627544 passes all migration-branch gates, including full native GUI/engine smoke and the all-owned-process baseline comparison; release is correctly skipped on that branch. Downloaded safe evidence matches the CI artifact digest. Old/new EXE bytes: 29,484,399 / 18,237,952 (38.14% reduction); ready: 3305.118 / 807.1651 ms; total working set: 91,340,800 / 96,002,048 bytes across four / two owned processes. RAM increased 5.10% in this single sample; differing Tk/Gio smoke checks preclude a universal startup/memory claim. Measurement retains every stable job member and validates required identities, uniqueness and nonzero samples. Only master/rolling delivery and matching-EXE verification remain.
+  - Status: verified
+  - Evidence: Go-only source/preparation/build/smoke/publisher tests and native Linux/Windows core/vet pass. Run 39296627544 passes all migration-branch gates, including full native GUI/engine smoke and the all-owned-process baseline comparison; downloaded evidence matches the CI artifact digest. Old/new EXE bytes: 29,484,399 / 18,237,952 (38.14% reduction); ready: 3305.118 / 807.1651 ms; total working set: 91,340,800 / 96,002,048 bytes across four / two owned processes. RAM increased 5.10% in this single sample; differing Tk/Gio smoke checks preclude a universal startup/memory claim. Master delivery 5d0a85bfba6429d71f83005ef44fc1991f0da4ef passes all four jobs in run 39297843476, including native package and Go rolling publisher. Release 417227270/tag rolling matches that master SHA and contains only WarpPocket.exe (18,237,952 bytes). Downloaded release EXE matches the same-run tested artifact byte-for-byte; no archive, checksum or report is attached to the release.
 
 ### Constraints
 - Breaking changes to implementation/public internal APIs are approved. Do not silently destroy or migrate private user identities; preserve profiles/accounts/import safety and cache compatibility described below.
@@ -59,7 +59,7 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 - Removing the user's .venv, private data, design reference or historical documentation. Python test files may remain when they test the Go deliverable; obsolete Python runtime tests must not masquerade as Go coverage.
 
 ## Change Envelope
-- Root go.mod/go.sum and a narrow .gitattributes LF rule for digest-pinned embedded payloads; cmd/warppocket; internal model/storage/profile/process/backend/health/finder/controller/ui/smoke/resources; independent tools module with prepare/smoke/release commands and tests; moved embedded Go patch/test payloads; vendor metadata/licenses; Go/Python tests; workflow; README and this goal.
+- Root go.mod/go.sum and a narrow .gitattributes LF rule for digest-pinned embedded payloads; cmd/warppocket; internal application/engine/model/storage/profile/process/backend/health/finder/controller/ui/smoke/resources/trust/diagnostics implementing the copied plan; independent tools module with prepare/smoke/footprint/release commands and tests; moved embedded Go patch/test payloads; vendor metadata/licenses; Go/Python tests; workflow; README and this goal.
 - Remove superseded Python runtime, non-test Python build/publication scripts, PyInstaller spec/runtime requirements/pyproject after local Go parity is verified on the isolated migration branch; require full native parity before master delivery. The design reference is read-only input, not a new embedded browser stack.
 - Go 1.26.9; Gio and Gio extensions v0.10.3; existing pinned wireproxy/WireGuard sources and hash verification. Native source copies under ignored build/deps, never patched global Go module cache. Only narrow TOML/uTLS/native API dependencies justified by the approved port.
 
@@ -74,16 +74,14 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 8. **Remove old runtime and close.** Delete Python backend/GUI/build/release path and PyInstaller packaging only after required Go behavior passes. Keep Python only for useful tests, not source compatibility theatre. Update README, measure old/new footprint without claiming unmeasured improvement, run native/live/packaged gates, commit/push and compare the published EXE with its tested artifact. Stop after closure.
 
 ## Current Checkpoint
-- Closes: final Go-only master delivery; R1–R4 and the measured R5 footprint are verified.
-- Smallest next action: fast-forward the verified migration into master, require its canonical Go workflow, then compare the sole rolling EXE asset with that same run's tested artifact.
-- Expected evidence: successful master Linux/Windows/package/publication jobs, matching origin/rolling SHA and only WarpPocket.exe attached to the release.
-- Replan if: an observed native failure exposes a concrete ABI, graphics or ownership cause; diagnose it rather than weakening a gate or publishing the bootstrap demo.
+- Closed: R1–R5 and affected constraints. The verified Go migration is delivered to master and rolling; no remaining implementation checkpoint.
+- Delivery: persist this completion record; subsequent master pushes use the verified Go-only automatic release path.
 
 ## Current State
 - Baseline: b3239e85e8ffcc2ce1d4f9d3286922f6d1ac31ea; old Windows EXE 29,484,399 bytes. Existing primary/probe private identities and verified split-routing/DNS behavior are available for reuse.
-- Last evidence: run 39296627544 is green for all required migration-branch jobs: Linux/Windows tool/core/vet, races, 21 rendered state/DPI frames, native packaged GUI/clipboard/import/picker/graceful and GUI-only crash proof, plus measured old/new footprint. The original exactly-three-process baseline assumption was disproved by four actual owned legacy processes; all are now counted. Real saved-profile gate remains 58 requests/zero errors with no API/registration. Runtime Python and Python delivery invocations are retired; user data/design/.venv remain untouched.
-- Blocker: none; no known local or native gate failure remains.
-- Next: master/rolling delivery and final matching-EXE verification.
+- Last evidence: run 39296627544 verifies the complete migration and honest footprint comparison. Master run 39297843476 passes Linux/Windows tests, native package and rolling publication; downloaded release and same-run artifact are identical. Real saved-profile gate remains 58 requests/zero errors with no API/registration. Runtime Python and Python delivery invocations are retired; no Python files remain tracked. User profiles/accounts/design/.venv are preserved.
+- Blocker: none; no known local, native or publication failure remains.
+- Next: none; the approved migration is complete. Historical Windows 10 acceptance is not claimed or modified.
 
 ## Material Decisions
 - 2026-10-19: latest user permits breaking changes and Python tests only; runtime/build/publication move to Go. Self-worker architecture preserves isolation without shipping helper executables. Smaller/lighter is measured, not assumed from language alone.
@@ -108,6 +106,10 @@ Complete the frozen Required Outcomes using the listed Change Envelope and Prima
 
 - 2026-10-19: run 39295123717 passes complete native GUI/clipboard/import/picker/graceful and GUI-only crash checks; R1/R3/R4 verified. Baseline measurement's three-process assumption is replaced with all stable owned job members plus required-identity/uniqueness/nonzero validation; native comparison and master delivery are next.
 - 2026-10-19: run 39296627544 also passes the complete all-owned-process comparison. Old/new EXE 29,484,399 / 18,237,952 bytes; working sets 91,340,800 / 96,002,048 bytes; results and limitations recorded in README. All migration-branch gates pass; only master publication remains.
+- 2026-10-19: verified migration fast-forwarded to master at 5d0a85b. All four jobs in run 39297843476 succeed, including Go publication; rolling/master SHA and the sole downloaded EXE match the tested artifact. Closure check passes; migration complete.
 
 ## Completion
-- Pending required outcomes; no migration completion claim yet.
+- Resolved outcomes: R1, R2, R3, R4 and R5 verified; no pending outcome.
+- Commands/evidence: Go preparation/native policy gates; root and tools `go test -mod=readonly -race ./...` and `go vet -mod=readonly ./...`; 21 rendered Crayon state/DPI frames; native Windows frame/clipboard/import/picker/graceful/GUI-only crash proofs; real existing-profile network gate; [migration comparison run 39296627544](https://github.com/0FL01/WarpPocket/actions/runs/39296627544); [master run 39297843476](https://github.com/0FL01/WarpPocket/actions/runs/39297843476); [rolling WarpPocket.exe](https://github.com/0FL01/WarpPocket/releases/download/rolling/WarpPocket.exe), downloaded and compared byte-for-byte with its tested artifact.
+- Constraint/diff check: current backend/GUI/build/release are Go-only; Python/Tk/PyInstaller/runtime helpers retired, pinned source hashes/native gates preserved. No new registrations, profile/account rewrite, system DNS/routes/proxy/firewall change, secret upload or extra release attachment. Same-EXE ownership, primary/probe separation, cancellation, private storage and no-fallback policies pass. Design input, .venv, private data and historical/source documents are not removed or rewritten. Size improved; measured RAM regression and benchmark limits are explicitly disclosed.
+- Final status: complete. Stop substantive migration work.
