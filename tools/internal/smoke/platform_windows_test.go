@@ -188,7 +188,22 @@ func TestNativeWindowsGUIOnlyTerminationWithRetainedSafetyJob(t *testing.T) {
 	}
 	measurements, err := launch.WorkingSets()
 	if err != nil || len(measurements) != 2 || measurements[0].WorkingSetBytes == 0 || measurements[1].WorkingSetBytes == 0 {
-		t.Fatalf("job-wide native working sets not measured: %+v, error=%v", measurements, err)
+		var identities []Identity
+		for _, measured := range measurements {
+			process, openErr := platform.OpenProcess(measured.PID)
+			if openErr != nil {
+				t.Logf("owned PID %d identity unavailable: %v", measured.PID, openErr)
+				continue
+			}
+			identity, identityErr := process.Identity()
+			_ = process.Close()
+			if identityErr != nil {
+				t.Logf("owned PID %d identity unavailable: %v", measured.PID, identityErr)
+				continue
+			}
+			identities = append(identities, identity)
+		}
+		t.Fatalf("job-wide native working sets not measured: gui=%d engine=%d measured=%+v identities=%+v error=%v", launch.GUI().PID(), childPID, measurements, identities, err)
 	}
 	if err := launch.GUI().Terminate(); err != nil {
 		t.Fatal(err)
