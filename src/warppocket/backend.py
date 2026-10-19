@@ -52,6 +52,9 @@ class WireProxyBackend:
             with socket.socket() as reservation:
                 if sys.platform == "win32":
                     reservation.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                elif sys.platform == "linux":
+                    # Match Go's listener: closed SOCKS sessions may leave TIME_WAIT.
+                    reservation.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 try:
                     reservation.bind(("127.0.0.1", port or 0))
                 except OSError:

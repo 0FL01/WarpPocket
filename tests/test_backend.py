@@ -17,6 +17,7 @@ class BackendTests(unittest.TestCase):
             Storage(paths)
             manager = Mock()
             backend = WireProxyBackend(paths, manager, Path("/not-used"))
+            occupied.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             occupied.bind(("127.0.0.1", 0))
             occupied.listen()
             with self.assertRaises(AppError) as caught:
@@ -24,6 +25,33 @@ class BackendTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, "port_busy")
             manager.start.assert_not_called()
             manager.stop.assert_not_called()
+
+    def test_real_helper_reconnects_after_server_closes_socks_session(self):
+        from warppocket.process_manager import ProcessManager
+        try:
+            binary = bundled_binary("wireproxy")
+        except AppError:
+            self.skipTest("run scripts/fetch_vendor.py to enable actual-helper smoke")
+        profile = Profile(base64.b64encode(bytes(range(32))).decode(), ("172.16.0.2/32",),
+                          ("1.1.1.1",), base64.b64encode(bytes(range(32, 64))).decode(),
+                          Endpoint("127.0.0.1", 9), ("0.0.0.0/0",))
+        with tempfile.TemporaryDirectory() as directory:
+            paths = AppPaths(Path(directory))
+            Storage(paths)
+            manager = ProcessManager()
+            self.addCleanup(manager.shutdown)
+            backend = WireProxyBackend(paths, manager, binary)
+            first = backend.start(profile, profile.endpoint, role="primary")
+            port = first.port
+            with socket.create_connection(("127.0.0.1", port), timeout=2) as connection:
+                connection.sendall(b"\x05\x01\x02")  # Unsupported auth: server closes first.
+                self.assertEqual(connection.recv(2), b"\x05\xff")
+                self.assertEqual(connection.recv(1), b"")
+            backend.stop(first)
+            second = backend.start(profile, profile.endpoint, role="primary", port=port)
+            self.assertIsNone(second.process.poll())
+            self.assertEqual(second.port, port)
+            backend.stop(second)
 
     def test_real_helper_offline_loopback_configuration_and_cleanup(self):
         from warppocket.process_manager import ProcessManager
